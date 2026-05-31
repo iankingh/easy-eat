@@ -1,34 +1,144 @@
-# 櫃台客服訂單頁面
+# easy-eat API 文件
 
-## 所有訂餐的清單 API
+---
 
-## 新增訂餐 API 
-1.選擇餐廳
-2.動態增加訂單中餐點的項目
-3.能選擇類型及餐點並選擇數量、填寫備註
-4.自動加總餐點價格
-5.送出訂單(能在主頁面清單上看到)
-6.取消(回到主頁面)
-7.訂單餐點統計表
+## 訂單管理
 
-## 訂單詳細內容 API
-1.列出是哪一家餐廳的訂單、訂單編號
-2.訂單品項、數量、備註
-3.總金額
+### 取得所有訂單
 
-## 訂單餐點統計表 API
+```
+GET /api/orders
+```
 
+**Response**
+```json
+[
+  {
+    "id": 1,
+    "restaurantName": "香港茶樓",
+    "totalAmount": 250,
+    "createdAt": "2024-01-15T12:00:00",
+    "items": [...]
+  }
+]
+```
 
-# 後台設定
+---
 
-# 能新增餐廳API，並增加對應的餐點及價格
-# 有新刪修查的功能 
-CRUD (新增:Create , 讀取:Read, 更新: Update, 刪除:Delete
-## 新增(餐點名稱、價格、類型[飲料,食物,點心..]) API 
-## 讀取 列出目前所有物品以及詳細資料
-## 修改(點選按鈕進行該餐廳資料修改)
-## 刪除(按鈕刪除)
+### 新增訂單
 
-新增查詢修改刪除餐點
+```
+POST /api/orders
+```
 
-新增餐廳修改餐廳刪除餐廳
+**Request Body**
+```json
+{
+  "restaurantId": 1,
+  "items": [
+    {
+      "mealId": 101,
+      "quantity": 2,
+      "note": "少冰"
+    }
+  ]
+}
+```
+
+**Response**
+```json
+{
+  "id": 42,
+  "restaurantName": "香港茶樓",
+  "totalAmount": 150,
+  "createdAt": "2024-01-15T12:30:00"
+}
+```
+
+---
+
+### 取得單筆訂單詳細
+
+```
+GET /api/orders/{id}
+```
+
+**Response**
+```json
+{
+  "id": 42,
+  "restaurantName": "香港茶樓",
+  "items": [
+    {
+      "mealName": "炒飯",
+      "quantity": 2,
+      "price": 75,
+      "note": "少冰"
+    }
+  ],
+  "totalAmount": 150,
+  "createdAt": "2024-01-15T12:30:00"
+}
+```
+
+---
+
+### 餐點統計表
+
+```
+GET /api/orders/statistics
+```
+
+**Response**
+```json
+[
+  {
+    "mealName": "炒飯",
+    "totalQuantity": 15,
+    "totalAmount": 1125
+  }
+]
+```
+
+---
+
+## 後台管理
+
+### 餐廳 CRUD
+
+| Method | Path | 說明 |
+|--------|------|------|
+| `GET` | `/api/restaurants` | 取得所有餐廳 |
+| `POST` | `/api/restaurants` | 新增餐廳 |
+| `PUT` | `/api/restaurants/{id}` | 修改餐廳 |
+| `DELETE` | `/api/restaurants/{id}` | 刪除餐廳 |
+
+**新增餐廳 Request Body**
+```json
+{
+  "name": "香港茶樓",
+  "description": "港式美食"
+}
+```
+
+---
+
+### 餐點 CRUD
+
+| Method | Path | 說明 |
+|--------|------|------|
+| `GET` | `/api/restaurants/{id}/meals` | 取得餐廳所有餐點 |
+| `POST` | `/api/meals` | 新增餐點 |
+| `PUT` | `/api/meals/{id}` | 修改餐點 |
+| `DELETE` | `/api/meals/{id}` | 刪除餐點 |
+
+**新增餐點 Request Body**
+```json
+{
+  "restaurantId": 1,
+  "name": "炒飯",
+  "price": 75,
+  "category": "主食"
+}
+```
+

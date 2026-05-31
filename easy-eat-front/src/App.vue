@@ -1,23 +1,23 @@
 <script setup lang="ts">
-import { RouterLink, RouterView } from 'vue-router'
-import HelloWorld from './components/HelloWorld.vue'
+import { RouterView } from 'vue-router'
+import AppSidebar from './components/AppSidebar.vue'
 </script>
 
 <template>
-  <header>
-    <img alt="Vue logo" class="logo" src="@/assets/logo.svg" width="125" height="125" />
-
-    <div class="wrapper">
-      <HelloWorld msg="You did it!" />
-
-      <nav>
-        <RouterLink to="/">Home</RouterLink>
-        <RouterLink to="/about">About</RouterLink>
-      </nav>
+  <div class="app-layout">
+    <header class="app-header">
+      <h1>🍽 訂餐系統</h1>
+    </header>
+    <div class="app-body">
+      <AppSidebar />
+      <main class="app-main">
+        <RouterView />
+      </main>
     </div>
-  </header>
-
-  <RouterView />
+    <footer class="app-footer">
+      <p>版權所有 &copy; 2023 - 訂餐系統</p>
+    </footer>
+  </div>
 </template>
 
 <style scoped>
