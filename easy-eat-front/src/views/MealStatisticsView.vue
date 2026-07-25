@@ -1,8 +1,24 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useOrderStore } from '../stores/order'
+import { useToast } from '@/composables/useToast'
 
 const orderStore = useOrderStore()
+const toast = useToast()
+
+onMounted(() => {
+  void initializeView()
+})
+
+async function initializeView() {
+  if (!orderStore.initialized) {
+    try {
+      await orderStore.initialize()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '載入統計失敗，請稍後再試')
+    }
+  }
+}
 
 const stats = computed(() => orderStore.mealStatistics)
 const totalQty = computed(() => stats.value.reduce((s, i) => s + i.quantity, 0))

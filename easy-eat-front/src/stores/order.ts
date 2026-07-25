@@ -1,107 +1,178 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { orderService } from '@/services/orderService'
+import type { MealStatistic, Order, OrderItem, OrderStatus } from '@/types/order'
 
-export interface OrderItem {
-  menuItemId: string
-  name: string
-  price: number
-  quantity: number
-  note: string
-}
+export type { Order, OrderItem, OrderStatus } from '@/types/order'
 
-export interface Order {
-  id: string
-  orderId: string
-  restaurantId: string
-  restaurantName: string
-  items: OrderItem[]
-  totalAmount: number
-  createdAt: string
-}
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
 
-const STORAGE_KEY = 'easy-eat-orders'
-const SEQ_KEY = 'easy-eat-order-seq'
-
-function generateOrderId(): string {
-  const now = new Date()
-  const date = now.toISOString().slice(0, 10).replace(/-/g, '')
-  const hours = String(now.getHours()).padStart(2, '0')
-  const minutes = String(now.getMinutes()).padStart(2, '0')
-  const seconds = String(now.getSeconds()).padStart(2, '0')
-  const time = `${hours}${minutes}${seconds}`
-  const seq = parseInt(localStorage.getItem(SEQ_KEY) || '0') + 1
-  localStorage.setItem(SEQ_KEY, String(seq))
-  return `${date}-${time}-${String(seq).padStart(5, '0')}`
+  return '發生未知錯誤，請稍後再試'
 }
 
 export const useOrderStore = defineStore('order', () => {
-  const orders = ref<Order[]>(loadFromStorage())
+  const orders = ref<Order[]>([])
+  const loading = ref(false)
+  const initialized = ref(false)
+  const errorMessage = ref<string | null>(null)
 
-  function loadFromStorage(): Order[] {
-    const data = localStorage.getItem(STORAGE_KEY)
-    if (data) {
-      try {
-        return JSON.parse(data)
-      } catch {
-        return []
-      }
+  // ── Filter state ────────────────────────────────────────
+  const filterStatus = ref<OrderStatus | ''>('')
+  const filterRestaurant = ref('')
+  const filterDateFrom = ref('')
+  const filterDateTo = ref('')
+
+  const filteredOrders = computed(() => {
+    return orders.value.filter((order) => {
+      if (filterStatus.value && order.status !== filterStatus.value) return false
+      if (
+        filterRestaurant.value &&
+        !order.restaurantName.toLowerCase().includes(filterRestaurant.value.toLowerCase())
+      )
+        return false
+      if (filterDateFrom.value && order.createdAt < filterDateFrom.value) return false
+      if (filterDateTo.value && order.createdAt > filterDateTo.value + 'T23:59:59') return false
+      return true
+    })
+  })
+
+  function resetFilters() {
+    filterStatus.value = ''
+    filterRestaurant.value = ''
+    filterDateFrom.value = ''
+    filterDateTo.value = ''
+  }
+
+  async function initialize(force = false) {
+    if (initialized.value && !force) {
+      return
     }
-    return []
+
+    loading.value = true
+    errorMessage.value = null
+
+    try {
+      orders.value = await orderService.getOrders()
+      initialized.value = true
+    } catch (error) {
+      errorMessage.value = getErrorMessage(error)
+      throw error
+    } finally {
+      loading.value = false
+    }
   }
 
-  function save() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(orders.value))
-  }
-
-  function createOrder(
+  async function createOrder(
     restaurantId: string,
-    restaurantName: string,
+    _restaurantName: string,
     items: OrderItem[],
-  ): Order {
-    const totalAmount = items.reduce((sum, item) => sum + item.price * item.quantity, 0)
-    const order: Order = {
-      id: String(Date.now()),
-      orderId: generateOrderId(),
-      restaurantId,
-      restaurantName,
-      items,
-      totalAmount,
-      createdAt: new Date().toISOString(),
+  ): Promise<Order> {
+    loading.value = true
+    errorMessage.value = null
+
+    try {
+      const order = await orderService.createOrder({
+        restaurantId,
+        items: orderService.mapOrderItemsToCreateInput(items),
+      })
+      orders.value.unshift(order)
+      return order
+    } catch (error) {
+      errorMessage.value = getErrorMessage(error)
+      throw error
+    } finally {
+      loading.value = false
     }
-    orders.value.unshift(order)
-    save()
-    return order
   }
 
-  function deleteOrder(id: string) {
-    orders.value = orders.value.filter((o) => o.id !== id)
-    save()
+  async function deleteOrder(id: string) {
+    loading.value = true
+    errorMessage.value = null
+
+    try {
+      await orderService.deleteOrder(id)
+      orders.value = orders.value.filter((order) => order.id !== id)
+    } catch (error) {
+      errorMessage.value = getErrorMessage(error)
+      throw error
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function updateOrderStatus(id: string, status: OrderStatus): Promise<void> {
+    loading.value = true
+    errorMessage.value = null
+
+    try {
+      const updated = await orderService.updateOrderStatus(id, status)
+      const index = orders.value.findIndex((order) => order.id === id)
+      if (index !== -1) {
+        orders.value[index] = updated
+      }
+    } catch (error) {
+      errorMessage.value = getErrorMessage(error)
+      throw error
+    } finally {
+      loading.value = false
+    }
   }
 
   function getOrderById(id: string) {
-    return orders.value.find((o) => o.id === id)
+    return orders.value.find((order) => order.id === id)
   }
 
-  const mealStatistics = computed(() => {
-    const stats: Record<string, { name: string; price: number; quantity: number; total: number }> =
-      {}
+  const mealStatistics = computed<MealStatistic[]>(() => {
+    const statistics: Record<string, MealStatistic> = {}
+
     for (const order of orders.value) {
       for (const item of order.items) {
-        if (!stats[item.name]) {
-          stats[item.name] = { name: item.name, price: item.price, quantity: 0, total: 0 }
+        if (!statistics[item.name]) {
+          statistics[item.name] = {
+            name: item.name,
+            price: item.price,
+            quantity: 0,
+            total: 0,
+          }
         }
-        stats[item.name].quantity += item.quantity
-        stats[item.name].total += item.price * item.quantity
+
+        statistics[item.name].quantity += item.quantity
+        statistics[item.name].total += item.price * item.quantity
       }
     }
-    return Object.values(stats).sort((a, b) => b.quantity - a.quantity)
+
+    const result: MealStatistic[] = []
+    for (const key in statistics) {
+      result.push(statistics[key])
+    }
+
+    return result.sort((a, b) => b.quantity - a.quantity)
   })
+
+  function clearError() {
+    errorMessage.value = null
+  }
 
   return {
     orders,
+    loading,
+    initialized,
+    errorMessage,
+    filterStatus,
+    filterRestaurant,
+    filterDateFrom,
+    filterDateTo,
+    filteredOrders,
+    resetFilters,
+    initialize,
     createOrder,
     deleteOrder,
+    updateOrderStatus,
     getOrderById,
     mealStatistics,
+    clearError,
   }
 })

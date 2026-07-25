@@ -1,21 +1,46 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
+import { useOrderStore } from '../stores/order'
 import { useRestaurantStore } from '../stores/restaurant'
 import type { MenuItem } from '../stores/restaurant'
+import { useToast } from '@/composables/useToast'
 
 const restaurantStore = useRestaurantStore()
+const orderStore = useOrderStore()
+const toast = useToast()
 const CATEGORIES = ['食物', '飲料', '點心', '套餐', '其他']
+
+onMounted(() => {
+  void initializeView()
+})
+
+async function initializeView() {
+  try {
+    await Promise.all([restaurantStore.initialize(), orderStore.initialize()])
+  } catch (error) {
+    notifyError(error)
+  }
+}
+
+function notifyError(error: unknown) {
+  toast.error(error instanceof Error ? error.message : '操作失敗，請稍後再試')
+}
 
 // ─── Restaurant section ───────────────────────────────────────────
 const newRestaurantName = ref('')
 const editRestaurantId = ref<string | null>(null)
 const editRestaurantName = ref('')
 
-function addRestaurant() {
+async function addRestaurant() {
   const name = newRestaurantName.value.trim()
   if (!name) return
-  restaurantStore.addRestaurant(name)
-  newRestaurantName.value = ''
+
+  try {
+    await restaurantStore.addRestaurant(name)
+    newRestaurantName.value = ''
+  } catch (error) {
+    notifyError(error)
+  }
 }
 
 function startEditRestaurant(id: string, name: string) {
@@ -23,21 +48,31 @@ function startEditRestaurant(id: string, name: string) {
   editRestaurantName.value = name
 }
 
-function saveRestaurant() {
+async function saveRestaurant() {
   const name = editRestaurantName.value.trim()
   if (!name || !editRestaurantId.value) return
-  restaurantStore.updateRestaurant(editRestaurantId.value, name)
-  editRestaurantId.value = null
+
+  try {
+    await restaurantStore.updateRestaurant(editRestaurantId.value, name)
+    editRestaurantId.value = null
+  } catch (error) {
+    notifyError(error)
+  }
 }
 
 function cancelEditRestaurant() {
   editRestaurantId.value = null
 }
 
-function deleteRestaurant(id: string) {
+async function deleteRestaurant(id: string) {
   if (!confirm('確定要刪除此餐廳及其所有餐點？')) return
-  restaurantStore.deleteRestaurant(id)
-  if (activeRestaurantId.value === id) activeRestaurantId.value = null
+
+  try {
+    await restaurantStore.deleteRestaurant(id)
+    if (activeRestaurantId.value === id) activeRestaurantId.value = null
+  } catch (error) {
+    notifyError(error)
+  }
 }
 
 // ─── MenuItem section ─────────────────────────────────────────────
@@ -57,15 +92,20 @@ function toggleRestaurant(id: string) {
   }
 }
 
-function addMenuItem() {
+async function addMenuItem() {
   if (!activeRestaurantId.value) return
   const name = newItem.value.name.trim()
   if (!name || newItem.value.price <= 0) {
     alert('請填寫餐點名稱及有效價格')
     return
   }
-  restaurantStore.addMenuItem(activeRestaurantId.value, { ...newItem.value, name })
-  newItem.value = { name: '', price: 0, category: '食物' }
+
+  try {
+    await restaurantStore.addMenuItem(activeRestaurantId.value, { ...newItem.value, name })
+    newItem.value = { name: '', price: 0, category: '食物' }
+  } catch (error) {
+    notifyError(error)
+  }
 }
 
 function startEditItem(id: string, item: MenuItem) {
@@ -73,29 +113,55 @@ function startEditItem(id: string, item: MenuItem) {
   editItem.value = { name: item.name, price: item.price, category: item.category }
 }
 
-function saveMenuItem() {
+async function saveMenuItem() {
   if (!activeRestaurantId.value || !editItemId.value) return
   const name = editItem.value.name.trim()
   if (!name || editItem.value.price <= 0) {
     alert('請填寫餐點名稱及有效價格')
     return
   }
-  restaurantStore.updateMenuItem(activeRestaurantId.value, editItemId.value, {
-    ...editItem.value,
-    name,
-  })
-  editItemId.value = null
+
+  try {
+    await restaurantStore.updateMenuItem(activeRestaurantId.value, editItemId.value, {
+      ...editItem.value,
+      name,
+    })
+    editItemId.value = null
+  } catch (error) {
+    notifyError(error)
+  }
 }
 
 function cancelEditItem() {
   editItemId.value = null
 }
 
-function deleteMenuItem(itemId: string) {
+async function deleteMenuItem(itemId: string) {
   if (!activeRestaurantId.value) return
   if (confirm('確定要刪除此餐點？')) {
-    restaurantStore.deleteMenuItem(activeRestaurantId.value, itemId)
-    if (editItemId.value === itemId) editItemId.value = null
+    try {
+      await restaurantStore.deleteMenuItem(activeRestaurantId.value, itemId)
+      if (editItemId.value === itemId) editItemId.value = null
+    } catch (error) {
+      notifyError(error)
+    }
+  }
+}
+
+async function resetMockData() {
+  if (!confirm('確定要重置 mock 資料嗎？這會清空現有訂單並還原預設餐廳。')) {
+    return
+  }
+
+  try {
+    await restaurantStore.resetMockData()
+    await orderStore.initialize(true)
+    activeRestaurantId.value = null
+    editItemId.value = null
+    editRestaurantId.value = null
+    toast.success('Mock 資料已重置')
+  } catch (error) {
+    notifyError(error)
   }
 }
 </script>
@@ -104,7 +170,10 @@ function deleteMenuItem(itemId: string) {
   <section class="page-section">
     <div class="section-header">
       <h1>後台設定</h1>
+      <button class="btn btn-secondary" @click="resetMockData">重置 Mock 資料</button>
     </div>
+
+    <p v-if="restaurantStore.errorMessage" class="error-text">{{ restaurantStore.errorMessage }}</p>
 
     <!-- ── Add Restaurant ───────────────────────────────── -->
     <div class="card">
@@ -250,6 +319,11 @@ function deleteMenuItem(itemId: string) {
 </template>
 
 <style scoped>
+.error-text {
+  margin-bottom: 12px;
+  color: #c0392b;
+}
+
 .restaurant-block {
   border: 1px solid #e0e0e0;
   border-radius: 6px;
@@ -298,7 +372,7 @@ function deleteMenuItem(itemId: string) {
   display: inline-block;
   padding: 2px 8px;
   background: #e8f0fe;
-  color: #4a90d9;
+  color: #2f5f95;
   border-radius: 12px;
   font-size: 0.8rem;
 }

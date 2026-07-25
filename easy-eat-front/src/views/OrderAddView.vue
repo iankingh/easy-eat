@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRestaurantStore } from '../stores/restaurant'
 import { useOrderStore } from '../stores/order'
 import type { OrderItem } from '../stores/order'
+import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
 const restaurantStore = useRestaurantStore()
 const orderStore = useOrderStore()
+const toast = useToast()
 
 interface DraftItem {
   menuItemId: string
@@ -17,6 +19,18 @@ interface DraftItem {
 
 const selectedRestaurantId = ref('')
 const orderItems = ref<DraftItem[]>([{ menuItemId: '', quantity: 1, note: '' }])
+
+onMounted(() => {
+  void initializeView()
+})
+
+async function initializeView() {
+  try {
+    await Promise.all([restaurantStore.initialize(), orderStore.initialize()])
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '初始化資料失敗，請稍後再試')
+  }
+}
 
 const selectedRestaurant = computed(() =>
   restaurantStore.restaurants.find((r) => r.id === selectedRestaurantId.value),
@@ -52,14 +66,14 @@ function removeItem(index: number) {
   orderItems.value.splice(index, 1)
 }
 
-function submitOrder() {
+async function submitOrder() {
   if (!selectedRestaurantId.value) {
-    alert('請選擇餐廳')
+    toast.error('請選擇餐廳')
     return
   }
   const validItems = orderItems.value.filter((i) => i.menuItemId && i.quantity > 0)
   if (validItems.length === 0) {
-    alert('請至少選擇一項餐點')
+    toast.error('請至少選擇一項餐點')
     return
   }
   const items: OrderItem[] = validItems.map((i) => {
@@ -72,12 +86,16 @@ function submitOrder() {
       note: i.note,
     }
   })
-  const order = orderStore.createOrder(
-    selectedRestaurantId.value,
-    selectedRestaurant.value!.name,
-    items,
-  )
-  router.push(`/orders/${order.id}`)
+  try {
+    const order = await orderStore.createOrder(
+      selectedRestaurantId.value,
+      selectedRestaurant.value!.name,
+      items,
+    )
+    router.push(`/orders/${order.id}`)
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : '建立訂單失敗，請稍後再試')
+  }
 }
 </script>
 
@@ -90,8 +108,9 @@ function submitOrder() {
     <form class="order-form" @submit.prevent="submitOrder">
       <!-- 餐廳選擇 -->
       <div class="form-group">
-        <label class="form-label">餐廳</label>
+        <label class="form-label" for="restaurant-select">餐廳</label>
         <select
+          id="restaurant-select"
           v-model="selectedRestaurantId"
           class="form-select"
           @change="onRestaurantChange"

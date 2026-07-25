@@ -1,5 +1,83 @@
 # easy-eat API 文件
 
+> 目前前端使用 **Mock Server**（`src/mock/server.ts`）模擬所有 API，資料持久化於 `localStorage`。  
+> 換接真實後端時只需修改 `src/api/` 目錄下的實作即可，service / store 層不需調整。
+
+---
+
+## 資料模型
+
+### OrderStatus
+
+```ts
+type OrderStatus = 'pending' | 'completed' | 'cancelled'
+```
+
+| 值 | 說明 |
+|----|------|
+| `pending` | 處理中（新建訂單預設） |
+| `completed` | 已完成 |
+| `cancelled` | 已取消 |
+
+### Order
+
+```ts
+interface Order {
+  id: string            // 系統內部 ID
+  orderId: string       // 顯示用訂單編號（格式：YYYYMMDD-HHmmss-NNNNN）
+  restaurantId: string
+  restaurantName: string
+  items: OrderItem[]
+  totalAmount: number
+  status: OrderStatus
+  createdAt: string     // ISO 8601
+}
+```
+
+### OrderItem
+
+```ts
+interface OrderItem {
+  menuItemId: string
+  name: string
+  price: number
+  quantity: number
+  note: string
+}
+```
+
+### Restaurant
+
+```ts
+interface Restaurant {
+  id: string
+  name: string
+  menuItems: MenuItem[]
+}
+```
+
+### MenuItem
+
+```ts
+interface MenuItem {
+  id: string
+  name: string
+  price: number
+  category: string   // '食物' | '飲料' | '點心' | '套餐' | '其他'
+}
+```
+
+### MealStatistic
+
+```ts
+interface MealStatistic {
+  name: string
+  price: number
+  quantity: number   // 所有訂單的總數量
+  total: number      // 總金額
+}
+```
+
 ---
 
 ## 訂單管理
@@ -10,18 +88,17 @@
 GET /api/orders
 ```
 
-**Response**
-```json
-[
-  {
-    "id": 1,
-    "restaurantName": "香港茶樓",
-    "totalAmount": 250,
-    "createdAt": "2024-01-15T12:00:00",
-    "items": [...]
-  }
-]
+**Response** `Order[]`（依 `createdAt` 降序排列）
+
+---
+
+### 取得單筆訂單
+
 ```
+GET /api/orders/{id}
+```
+
+**Response** `Order | null`
 
 ---
 
@@ -31,55 +108,48 @@ GET /api/orders
 POST /api/orders
 ```
 
-**Request Body**
-```json
-{
-  "restaurantId": 1,
-  "items": [
-    {
-      "mealId": 101,
-      "quantity": 2,
-      "note": "少冰"
-    }
-  ]
+**Request Body** `CreateOrderInput`
+```ts
+interface CreateOrderInput {
+  restaurantId: string
+  items: CreateOrderItemInput[]
+}
+
+interface CreateOrderItemInput {
+  menuItemId: string
+  quantity: number   // 正整數
+  note: string
 }
 ```
 
-**Response**
-```json
-{
-  "id": 42,
-  "restaurantName": "香港茶樓",
-  "totalAmount": 150,
-  "createdAt": "2024-01-15T12:30:00"
-}
-```
+**Response** `Order`（`status` 預設為 `"pending"`）
 
 ---
 
-### 取得單筆訂單詳細
+### 更新訂單狀態
 
 ```
-GET /api/orders/{id}
+PATCH /api/orders/{id}/status
 ```
 
-**Response**
+**Request Body**
 ```json
-{
-  "id": 42,
-  "restaurantName": "香港茶樓",
-  "items": [
-    {
-      "mealName": "炒飯",
-      "quantity": 2,
-      "price": 75,
-      "note": "少冰"
-    }
-  ],
-  "totalAmount": 150,
-  "createdAt": "2024-01-15T12:30:00"
-}
+{ "status": "completed" }
 ```
+
+允許值：`"pending"` | `"completed"` | `"cancelled"`
+
+**Response** `Order`（更新後的完整訂單）
+
+---
+
+### 刪除訂單
+
+```
+DELETE /api/orders/{id}
+```
+
+**Response** `void`
 
 ---
 
@@ -89,16 +159,7 @@ GET /api/orders/{id}
 GET /api/orders/statistics
 ```
 
-**Response**
-```json
-[
-  {
-    "mealName": "炒飯",
-    "totalQuantity": 15,
-    "totalAmount": 1125
-  }
-]
-```
+**Response** `MealStatistic[]`（依總數量降序排列）
 
 ---
 
@@ -110,16 +171,15 @@ GET /api/orders/statistics
 |--------|------|------|
 | `GET` | `/api/restaurants` | 取得所有餐廳 |
 | `POST` | `/api/restaurants` | 新增餐廳 |
-| `PUT` | `/api/restaurants/{id}` | 修改餐廳 |
-| `DELETE` | `/api/restaurants/{id}` | 刪除餐廳 |
+| `PUT` | `/api/restaurants/{id}` | 修改餐廳名稱 |
+| `DELETE` | `/api/restaurants/{id}` | 刪除餐廳（含其所有餐點） |
 
-**新增餐廳 Request Body**
+**新增 / 修改餐廳 Request Body**
 ```json
-{
-  "name": "香港茶樓",
-  "description": "港式美食"
-}
+{ "name": "餐廳名稱" }
 ```
+
+**Response** `Restaurant`
 
 ---
 
@@ -127,18 +187,29 @@ GET /api/orders/statistics
 
 | Method | Path | 說明 |
 |--------|------|------|
-| `GET` | `/api/restaurants/{id}/meals` | 取得餐廳所有餐點 |
-| `POST` | `/api/meals` | 新增餐點 |
-| `PUT` | `/api/meals/{id}` | 修改餐點 |
-| `DELETE` | `/api/meals/{id}` | 刪除餐點 |
+| `POST` | `/api/restaurants/{id}/items` | 新增餐點 |
+| `PUT` | `/api/restaurants/{id}/items/{itemId}` | 修改餐點 |
+| `DELETE` | `/api/restaurants/{id}/items/{itemId}` | 刪除餐點 |
 
-**新增餐點 Request Body**
-```json
-{
-  "restaurantId": 1,
-  "name": "炒飯",
-  "price": 75,
-  "category": "主食"
+**新增 / 修改餐點 Request Body** `MenuItemInput`
+```ts
+interface MenuItemInput {
+  name: string
+  price: number      // 大於 0 的正整數
+  category: string
 }
 ```
 
+**Response** `MenuItem`
+
+---
+
+### 重置 Mock 資料
+
+```
+POST /api/mock/reset
+```
+
+清空所有訂單，並還原 4 間預設餐廳及其菜單。
+
+**Response** `void`

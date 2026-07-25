@@ -1,6 +1,24 @@
 <script setup lang="ts">
+import { computed, onMounted } from 'vue'
 import { RouterView } from 'vue-router'
 import AppSidebar from './components/AppSidebar.vue'
+import ToastNotification from './components/ToastNotification.vue'
+import { useOrderStore } from './stores/order'
+import { useRestaurantStore } from './stores/restaurant'
+
+const orderStore = useOrderStore()
+const restaurantStore = useRestaurantStore()
+
+const appLoading = computed(() => !orderStore.initialized || !restaurantStore.initialized)
+const appError = computed(() => orderStore.errorMessage || restaurantStore.errorMessage)
+
+onMounted(async () => {
+  try {
+    await Promise.all([restaurantStore.initialize(), orderStore.initialize()])
+  } catch (error) {
+    console.error(error)
+  }
+})
 </script>
 
 <template>
@@ -11,75 +29,30 @@ import AppSidebar from './components/AppSidebar.vue'
     <div class="app-body">
       <AppSidebar />
       <main class="app-main">
+        <div v-if="appLoading" class="app-status">資料載入中...</div>
+        <div v-else-if="appError" class="app-status app-status-error">{{ appError }}</div>
         <RouterView />
       </main>
     </div>
     <footer class="app-footer">
-      <p>版權所有 &copy; 2023 - 訂餐系統</p>
+      <p>版權所有 &copy; 2026 - 訂餐系統</p>
     </footer>
   </div>
+  <ToastNotification />
 </template>
 
 <style scoped>
-header {
-  line-height: 1.5;
-  max-height: 100vh;
+.app-status {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #eef4fb;
+  color: #2c3e50;
+  font-size: 0.9rem;
 }
 
-.logo {
-  display: block;
-  margin: 0 auto 2rem;
-}
-
-nav {
-  width: 100%;
-  font-size: 12px;
-  text-align: center;
-  margin-top: 2rem;
-}
-
-nav a.router-link-exact-active {
-  color: var(--color-text);
-}
-
-nav a.router-link-exact-active:hover {
-  background-color: transparent;
-}
-
-nav a {
-  display: inline-block;
-  padding: 0 1rem;
-  border-left: 1px solid var(--color-border);
-}
-
-nav a:first-of-type {
-  border: 0;
-}
-
-@media (min-width: 1024px) {
-  header {
-    display: flex;
-    place-items: center;
-    padding-right: calc(var(--section-gap) / 2);
-  }
-
-  .logo {
-    margin: 0 2rem 0 0;
-  }
-
-  header .wrapper {
-    display: flex;
-    place-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  nav {
-    text-align: left;
-    margin-left: -1rem;
-    font-size: 1rem;
-
-    padding: 1rem 0;
-    margin-top: 1rem;
-  }
+.app-status-error {
+  background: #fdecea;
+  color: #c0392b;
 }
 </style>
