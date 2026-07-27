@@ -2,10 +2,12 @@ import { orderApi } from '@/api/orderApi'
 import type {
   CreateOrderInput,
   CreateOrderItemInput,
+  EditableOrderStatus,
   MealStatistic,
   Order,
   OrderItem,
   OrderStatus,
+  UpdateOrderInput,
 } from '@/types/order'
 
 export const orderService = {
@@ -17,8 +19,16 @@ export const orderService = {
     return orderApi.detail(id)
   },
 
-  createOrder(payload: CreateOrderInput): Promise<Order> {
-    return orderApi.create(payload)
+  createOrder(payload: CreateOrderInput, status: EditableOrderStatus = 'pending'): Promise<Order> {
+    return orderApi.create(payload, status)
+  },
+
+  updateOrder(id: string, payload: UpdateOrderInput): Promise<Order> {
+    return orderApi.update(id, payload)
+  },
+
+  submitOrder(id: string): Promise<Order> {
+    return orderApi.submit(id)
   },
 
   deleteOrder(id: string): Promise<void> {

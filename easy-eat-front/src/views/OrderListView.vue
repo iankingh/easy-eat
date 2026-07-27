@@ -1,62 +1,101 @@
 <script setup lang="ts">
-import { RouterLink, useRouter } from 'vue-router'
-import { useOrderStore } from '../stores/order'
-import type { OrderStatus } from '../stores/order'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import OrderStatusBadge from '@/components/orders/OrderStatusBadge.vue'
+import { ORDER_STATUS_OPTIONS } from '@/constants/order'
 import { useToast } from '@/composables/useToast'
-import { onMounted } from 'vue'
+import { useOrderStore, type OrderSortKey } from '@/stores/order'
+import type { OrderStatus } from '@/types/order'
+import { getErrorMessage } from '@/utils/error'
+
+type FinalStatus = Extract<OrderStatus, 'completed' | 'cancelled'>
 
 const orderStore = useOrderStore()
 const router = useRouter()
 const toast = useToast()
+const actionOrderId = ref('')
+
+const SORT_OPTIONS: { value: OrderSortKey; label: string }[] = [
+  { value: 'createdAt', label: '建立時間' },
+  { value: 'restaurantName', label: '餐廳名稱' },
+  { value: 'totalAmount', label: '總金額' },
+  { value: 'status', label: '訂單狀態' },
+]
+
+const resultStart = computed(() =>
+  orderStore.filteredOrders.length === 0
+    ? 0
+    : (orderStore.currentPage - 1) * orderStore.pageSize + 1,
+)
+const resultEnd = computed(() =>
+  Math.min(orderStore.currentPage * orderStore.pageSize, orderStore.filteredOrders.length),
+)
 
 onMounted(() => {
+  orderStore.pageSize = 20
   void initializeView()
 })
 
 async function initializeView() {
-  if (!orderStore.initialized) {
-    try {
-      await orderStore.initialize()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '載入訂單失敗，請稍後再試')
-    }
+  try {
+    await orderStore.initialize()
+  } catch (error) {
+    toast.error(getErrorMessage(error, '載入訂單失敗，請稍後再試'))
   }
 }
 
 function viewDetail(id: string) {
-  router.push(`/orders/${id}`)
+  void router.push({ name: 'order-detail', params: { id } })
+}
+
+function editOrder(id: string) {
+  void router.push({ name: 'order-edit', params: { id } })
+}
+
+async function submitDraft(id: string) {
+  actionOrderId.value = id
+  try {
+    await orderStore.submitDraft(id)
+    toast.success('訂單已送出')
+  } catch (error) {
+    toast.error(getErrorMessage(error, '送出訂單失敗'))
+  } finally {
+    actionOrderId.value = ''
+  }
 }
 
 async function deleteOrder(id: string) {
   if (!confirm('確定要刪除此訂單？')) return
+
+  actionOrderId.value = id
   try {
     await orderStore.deleteOrder(id)
     toast.success('訂單已刪除')
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : '刪除訂單失敗，請稍後再試')
+    toast.error(getErrorMessage(error, '刪除訂單失敗，請稍後再試'))
+  } finally {
+    actionOrderId.value = ''
   }
 }
 
-async function changeStatus(id: string, status: OrderStatus) {
+async function changeStatus(id: string, status: FinalStatus) {
+  actionOrderId.value = id
   try {
     await orderStore.updateOrderStatus(id, status)
-    toast.success('訂單狀態已更新')
+    toast.success(status === 'completed' ? '訂單已標記完成' : '訂單已取消')
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : '更新狀態失敗')
+    toast.error(getErrorMessage(error, '更新狀態失敗'))
+  } finally {
+    actionOrderId.value = ''
   }
 }
 
-const STATUS_OPTIONS: { value: OrderStatus | ''; label: string }[] = [
-  { value: '', label: '全部狀態' },
-  { value: 'pending', label: '處理中' },
-  { value: 'completed', label: '已完成' },
-  { value: 'cancelled', label: '已取消' },
-]
+function toggleSortDirection() {
+  orderStore.sortDirection = orderStore.sortDirection === 'asc' ? 'desc' : 'asc'
+}
 
-const STATUS_LABEL: Record<OrderStatus, string> = {
-  pending: '處理中',
-  completed: '已完成',
-  cancelled: '已取消',
+function goToPage(page: number) {
+  orderStore.currentPage = Math.min(Math.max(page, 1), orderStore.totalPages)
 }
 </script>
 
@@ -64,182 +103,306 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   <section class="page-section">
     <div class="section-header">
       <h1>所有訂餐清單</h1>
-      <RouterLink to="/orders/add" class="btn btn-primary">＋ 新增訂單</RouterLink>
+      <RouterLink :to="{ name: 'order-add' }" class="btn btn-primary">＋ 新增訂單</RouterLink>
     </div>
 
-    <!-- Filters -->
-    <div class="filter-bar">
-      <select v-model="orderStore.filterStatus" class="form-select filter-select">
-        <option v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value">
-          {{ opt.label }}
-        </option>
-      </select>
-      <input
-        v-model="orderStore.filterRestaurant"
-        type="text"
-        class="filter-input"
-        placeholder="搜尋餐廳名稱…"
-      />
-      <input
-        v-model="orderStore.filterDateFrom"
-        type="date"
-        class="filter-input"
-        title="起始日期"
-      />
-      <span class="filter-sep">～</span>
-      <input
-        v-model="orderStore.filterDateTo"
-        type="date"
-        class="filter-input"
-        title="結束日期"
-      />
-      <button class="btn btn-secondary btn-sm" @click="orderStore.resetFilters">重置篩選</button>
+    <div class="filter-panel">
+      <div class="filter-row">
+        <label class="filter-field search-field">
+          <span>搜尋</span>
+          <input
+            v-model="orderStore.searchQuery"
+            type="search"
+            class="form-input"
+            placeholder="訂單編號、餐廳、餐點或備註"
+          />
+        </label>
+        <label class="filter-field">
+          <span>狀態</span>
+          <select v-model="orderStore.filterStatus" class="form-select">
+            <option
+              v-for="option in ORDER_STATUS_OPTIONS"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
+        <label class="filter-field">
+          <span>餐廳</span>
+          <input
+            v-model="orderStore.filterRestaurant"
+            type="search"
+            class="form-input"
+            placeholder="餐廳名稱"
+          />
+        </label>
+      </div>
+
+      <div class="filter-row">
+        <label class="filter-field">
+          <span>起始日期</span>
+          <input v-model="orderStore.filterDateFrom" type="date" class="form-input" />
+        </label>
+        <label class="filter-field">
+          <span>結束日期</span>
+          <input v-model="orderStore.filterDateTo" type="date" class="form-input" />
+        </label>
+        <label class="filter-field">
+          <span>排序</span>
+          <select v-model="orderStore.sortBy" class="form-select">
+            <option v-for="option in SORT_OPTIONS" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
+        <button class="btn btn-secondary btn-sm direction-button" @click="toggleSortDirection">
+          {{ orderStore.sortDirection === 'asc' ? '升冪 ↑' : '降冪 ↓' }}
+        </button>
+        <button class="btn btn-secondary btn-sm reset-button" @click="orderStore.resetFilters">
+          重置篩選
+        </button>
+      </div>
     </div>
 
     <p class="result-count">
-      顯示 {{ orderStore.filteredOrders.length }} / {{ orderStore.orders.length }} 筆訂單
+      共 {{ orderStore.filteredOrders.length }} 筆符合條件
+      <template v-if="orderStore.filteredOrders.length > 0">
+        ，目前顯示第 {{ resultStart }}–{{ resultEnd }} 筆
+      </template>
     </p>
 
-    <div v-if="orderStore.filteredOrders.length === 0" class="empty-state">
+    <div v-if="orderStore.loading && !orderStore.initialized" class="empty-state">
+      <p>訂單載入中...</p>
+    </div>
+
+    <div v-else-if="orderStore.filteredOrders.length === 0" class="empty-state">
       <p>{{ orderStore.orders.length === 0 ? '目前沒有訂單' : '無符合條件的訂單' }}</p>
-      <RouterLink v-if="orderStore.orders.length === 0" to="/orders/add" class="btn btn-primary">
+      <RouterLink
+        v-if="orderStore.orders.length === 0"
+        :to="{ name: 'order-add' }"
+        class="btn btn-primary"
+      >
         立即新增
       </RouterLink>
     </div>
 
-    <div v-else class="table-wrapper">
-      <table>
-        <thead>
-          <tr>
-            <th>訂單編號</th>
-            <th>餐廳名稱</th>
-            <th>訂單品項 × 數量</th>
-            <th>備註</th>
-            <th>總金額</th>
-            <th>狀態</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="order in orderStore.filteredOrders" :key="order.id">
-            <td class="order-id">{{ order.orderId }}</td>
-            <td>{{ order.restaurantName }}</td>
-            <td>
-              <div v-for="item in order.items" :key="item.menuItemId" class="item-line">
-                {{ item.name }} × {{ item.quantity }}
-              </div>
-            </td>
-            <td>
-              <div v-for="item in order.items" :key="item.menuItemId + '-note'" class="item-line">
-                {{ item.note || '—' }}
-              </div>
-            </td>
-            <td class="amount">{{ order.totalAmount }} 元</td>
-            <td>
-              <span class="status-badge" :class="`status-${order.status}`">
-                {{ STATUS_LABEL[order.status] ?? order.status }}
-              </span>
-            </td>
-            <td class="actions">
-              <button class="btn btn-sm btn-info" @click="viewDetail(order.id)">詳細</button>
-              <button
-                v-if="order.status === 'pending'"
-                class="btn btn-sm btn-success"
-                @click="changeStatus(order.id, 'completed')"
-              >
-                完成
-              </button>
-              <button
-                v-if="order.status === 'pending'"
-                class="btn btn-sm btn-warning"
-                @click="changeStatus(order.id, 'cancelled')"
-              >
-                取消
-              </button>
-              <button class="btn btn-sm btn-danger" @click="deleteOrder(order.id)">刪除</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <template v-else>
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>訂單編號</th>
+              <th>建立時間</th>
+              <th>餐廳名稱</th>
+              <th>訂單品項 × 數量</th>
+              <th>總金額</th>
+              <th>狀態</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="order in orderStore.paginatedOrders" :key="order.id">
+              <td class="order-id">{{ order.orderId }}</td>
+              <td class="created-at">{{ new Date(order.createdAt).toLocaleString('zh-TW') }}</td>
+              <td>{{ order.restaurantName }}</td>
+              <td>
+                <div v-for="item in order.items" :key="item.menuItemId" class="item-line">
+                  {{ item.name }} × {{ item.quantity }}
+                  <span v-if="item.note" class="item-note">（{{ item.note }}）</span>
+                </div>
+              </td>
+              <td class="amount">{{ order.totalAmount }} 元</td>
+              <td><OrderStatusBadge :status="order.status" /></td>
+              <td>
+                <div class="actions">
+                  <button class="btn btn-sm btn-info" @click="viewDetail(order.id)">詳細</button>
+                  <button
+                    v-if="order.status === 'draft' || order.status === 'pending'"
+                    class="btn btn-sm btn-secondary"
+                    :disabled="actionOrderId === order.id"
+                    @click="editOrder(order.id)"
+                  >
+                    編輯
+                  </button>
+                  <button
+                    v-if="order.status === 'draft'"
+                    class="btn btn-sm btn-primary"
+                    :disabled="actionOrderId === order.id"
+                    @click="submitDraft(order.id)"
+                  >
+                    送出
+                  </button>
+                  <template v-if="order.status === 'pending'">
+                    <button
+                      class="btn btn-sm btn-success"
+                      :disabled="actionOrderId === order.id"
+                      @click="changeStatus(order.id, 'completed')"
+                    >
+                      完成
+                    </button>
+                    <button
+                      class="btn btn-sm btn-warning"
+                      :disabled="actionOrderId === order.id"
+                      @click="changeStatus(order.id, 'cancelled')"
+                    >
+                      取消
+                    </button>
+                  </template>
+                  <button
+                    class="btn btn-sm btn-danger"
+                    :disabled="actionOrderId === order.id"
+                    @click="deleteOrder(order.id)"
+                  >
+                    刪除
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <nav class="pagination" aria-label="訂單分頁">
+        <button
+          class="btn btn-secondary btn-sm"
+          :disabled="orderStore.currentPage <= 1"
+          @click="goToPage(orderStore.currentPage - 1)"
+        >
+          上一頁
+        </button>
+        <span>第 {{ orderStore.currentPage }} / {{ orderStore.totalPages }} 頁</span>
+        <button
+          class="btn btn-secondary btn-sm"
+          :disabled="orderStore.currentPage >= orderStore.totalPages"
+          @click="goToPage(orderStore.currentPage + 1)"
+        >
+          下一頁
+        </button>
+      </nav>
+    </template>
   </section>
 </template>
 
 <style scoped>
-.filter-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+.filter-panel {
   margin-bottom: 12px;
+  padding: 16px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #fff;
 }
-.filter-select,
-.filter-input {
-  padding: 6px 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 0.88rem;
+
+.filter-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
 }
-.filter-sep {
-  color: #888;
-  font-size: 0.85rem;
+
+.filter-row + .filter-row {
+  margin-top: 10px;
 }
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.filter-field > span {
+  color: #666;
+  font-size: 0.8rem;
+}
+
+.search-field {
+  flex: 1;
+  min-width: 260px;
+}
+
+.search-field .form-input {
+  width: 100%;
+}
+
+.direction-button,
+.reset-button {
+  margin-bottom: 1px;
+}
+
+.reset-button {
+  margin-left: auto;
+}
+
 .result-count {
-  font-size: 0.85rem;
-  color: #888;
   margin-bottom: 8px;
+  color: #777;
+  font-size: 0.85rem;
 }
+
 .item-line {
   white-space: nowrap;
 }
-.order-id {
-  font-size: 0.8rem;
+
+.item-note {
+  color: #888;
+  font-size: 0.82rem;
+}
+
+.order-id,
+.created-at {
   color: #666;
+  font-size: 0.8rem;
+  white-space: nowrap;
 }
+
 .amount {
-  font-weight: bold;
   color: #e74c3c;
+  font-weight: bold;
+  white-space: nowrap;
 }
+
 .actions {
-  white-space: nowrap;
   display: flex;
-  gap: 4px;
   flex-wrap: wrap;
+  gap: 4px;
+  min-width: 205px;
 }
-.status-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.status-pending {
-  background: #fef3cd;
-  color: #856404;
-}
-.status-completed {
-  background: #d4edda;
-  color: #155724;
-}
-.status-cancelled {
-  background: #f8d7da;
-  color: #721c24;
-}
+
 .btn-success {
   background: #27ae60;
   color: #fff;
-  border: none;
 }
-.btn-success:hover {
-  background: #219a52;
-}
+
 .btn-warning {
   background: #e67e22;
   color: #fff;
-  border: none;
 }
-.btn-warning:hover {
-  background: #ca6f1e;
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 18px;
+  color: #666;
+  font-size: 0.88rem;
+}
+
+@media (max-width: 720px) {
+  .filter-field,
+  .search-field {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .filter-field .form-input,
+  .filter-field .form-select {
+    width: 100%;
+  }
+
+  .reset-button {
+    margin-left: 0;
+  }
 }
 </style>

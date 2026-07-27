@@ -6,14 +6,6 @@
 # Built-in defaults (always excluded unless negated):
 #   node_modules/, .git/, dist/, build/, obj/, *.lock, *.min.js, etc.
 
-# --- Large reference projects and archived examples ---
-
-# reference/
-
-# --- Migrated static prototype (uncomment if it is no longer maintained) ---
-
-# easy-eat-front/page/
-
 # --- Tests (keep included by default) ---
 
 # *.test.*

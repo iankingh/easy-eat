@@ -16,6 +16,13 @@ body {
   background: #f0f2f5;
 }
 
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
 /* ── App Layout ──────────────────────────────────── */
 .app-layout {
   display: flex;
@@ -57,7 +64,8 @@ body {
 
 /* ── Page Section ────────────────────────────────── */
 .page-section {
-  max-width: 1100px;
+  width: 100%;
+  max-width: 1200px;
 }
 
 .section-header {
@@ -147,7 +155,9 @@ tfoot td {
   border-radius: 5px;
   cursor: pointer;
   text-decoration: none;
-  transition: opacity 0.15s, background-color 0.15s;
+  transition:
+    opacity 0.15s,
+    background-color 0.15s;
   white-space: nowrap;
 }
 
@@ -180,6 +190,16 @@ tfoot td {
   color: #fff;
 }
 
+.btn-success {
+  background-color: #27ae60;
+  color: #fff;
+}
+
+.btn-warning {
+  background-color: #e67e22;
+  color: #fff;
+}
+
 .btn-sm {
   padding: 4px 10px;
   font-size: 0.82rem;
@@ -198,7 +218,8 @@ tfoot td {
 }
 
 .form-input,
-.form-select {
+.form-select,
+.form-textarea {
   padding: 7px 10px;
   border: 1px solid #ccc;
   border-radius: 4px;
@@ -209,7 +230,8 @@ tfoot td {
 }
 
 .form-input:focus,
-.form-select:focus {
+.form-select:focus,
+.form-textarea:focus {
   border-color: #4a90d9;
 }
 
@@ -258,6 +280,40 @@ tfoot td {
   padding: 8px 0;
 }
 
+.error-text {
+  margin-bottom: 12px;
+  color: #c0392b;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-draft {
+  background: #e8eaf6;
+  color: #3949ab;
+}
+
+.status-pending {
+  background: #fef3cd;
+  color: #856404;
+}
+
+.status-completed {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status-cancelled {
+  background: #f8d7da;
+  color: #721c24;
+}
+
 a {
   color: #4a90d9;
   text-decoration: none;
@@ -265,4 +321,50 @@ a {
 
 a:hover {
   text-decoration: underline;
+}
+
+@media (max-width: 800px) {
+  .app-header,
+  .app-main {
+    padding: 16px;
+  }
+
+  .app-body {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    min-width: 0;
+    padding: 10px 16px;
+    overflow-x: auto;
+  }
+
+  .sidebar ul {
+    display: flex;
+    gap: 8px;
+    min-width: max-content;
+  }
+
+  .sidebar li {
+    margin-bottom: 0;
+  }
+
+  .section-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .card,
+  .order-form {
+    padding: 16px;
+  }
+
+  table {
+    min-width: 720px;
+  }
+
+  .form-actions {
+    flex-wrap: wrap;
+  }
 }

@@ -1,4 +1,5 @@
-export type OrderStatus = 'pending' | 'completed' | 'cancelled'
+export type OrderStatus = 'draft' | 'pending' | 'completed' | 'cancelled'
+export type EditableOrderStatus = Extract<OrderStatus, 'draft' | 'pending'>
 
 export interface OrderItem {
   menuItemId: string
@@ -29,6 +30,8 @@ export interface CreateOrderInput {
   restaurantId: string
   items: CreateOrderItemInput[]
 }
+
+export type UpdateOrderInput = CreateOrderInput
 
 export interface UpdateOrderStatusInput {
   status: OrderStatus

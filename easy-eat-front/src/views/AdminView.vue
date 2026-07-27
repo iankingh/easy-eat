@@ -1,389 +1,176 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { useOrderStore } from '../stores/order'
-import { useRestaurantStore } from '../stores/restaurant'
-import type { MenuItem } from '../stores/restaurant'
+import { computed, onMounted, ref } from 'vue'
+import CategoryManagement from '@/components/admin/CategoryManagement.vue'
+import RestaurantManagement from '@/components/admin/RestaurantManagement.vue'
 import { useToast } from '@/composables/useToast'
+import { useOrderStore } from '@/stores/order'
+import { useRestaurantStore } from '@/stores/restaurant'
+import { getErrorMessage } from '@/utils/error'
 
 const restaurantStore = useRestaurantStore()
 const orderStore = useOrderStore()
 const toast = useToast()
-const CATEGORIES = ['食物', '飲料', '點心', '套餐', '其他']
+
+const activeSection = ref<'restaurants' | 'categories'>('restaurants')
+const initializing = ref(false)
+const resetting = ref(false)
+const pageError = ref('')
+
+const pageBusy = computed(
+  () => initializing.value || resetting.value || restaurantStore.loading || orderStore.loading,
+)
 
 onMounted(() => {
   void initializeView()
 })
 
 async function initializeView() {
+  initializing.value = true
+  pageError.value = ''
   try {
     await Promise.all([restaurantStore.initialize(), orderStore.initialize()])
   } catch (error) {
-    notifyError(error)
-  }
-}
-
-function notifyError(error: unknown) {
-  toast.error(error instanceof Error ? error.message : '操作失敗，請稍後再試')
-}
-
-// ─── Restaurant section ───────────────────────────────────────────
-const newRestaurantName = ref('')
-const editRestaurantId = ref<string | null>(null)
-const editRestaurantName = ref('')
-
-async function addRestaurant() {
-  const name = newRestaurantName.value.trim()
-  if (!name) return
-
-  try {
-    await restaurantStore.addRestaurant(name)
-    newRestaurantName.value = ''
-  } catch (error) {
-    notifyError(error)
-  }
-}
-
-function startEditRestaurant(id: string, name: string) {
-  editRestaurantId.value = id
-  editRestaurantName.value = name
-}
-
-async function saveRestaurant() {
-  const name = editRestaurantName.value.trim()
-  if (!name || !editRestaurantId.value) return
-
-  try {
-    await restaurantStore.updateRestaurant(editRestaurantId.value, name)
-    editRestaurantId.value = null
-  } catch (error) {
-    notifyError(error)
-  }
-}
-
-function cancelEditRestaurant() {
-  editRestaurantId.value = null
-}
-
-async function deleteRestaurant(id: string) {
-  if (!confirm('確定要刪除此餐廳及其所有餐點？')) return
-
-  try {
-    await restaurantStore.deleteRestaurant(id)
-    if (activeRestaurantId.value === id) activeRestaurantId.value = null
-  } catch (error) {
-    notifyError(error)
-  }
-}
-
-// ─── MenuItem section ─────────────────────────────────────────────
-const activeRestaurantId = ref<string | null>(null)
-
-const newItem = ref<Omit<MenuItem, 'id'>>({ name: '', price: 0, category: '食物' })
-const editItemId = ref<string | null>(null)
-const editItem = ref<Omit<MenuItem, 'id'>>({ name: '', price: 0, category: '食物' })
-
-function toggleRestaurant(id: string) {
-  if (activeRestaurantId.value === id) {
-    activeRestaurantId.value = null
-  } else {
-    activeRestaurantId.value = id
-    newItem.value = { name: '', price: 0, category: '食物' }
-    editItemId.value = null
-  }
-}
-
-async function addMenuItem() {
-  if (!activeRestaurantId.value) return
-  const name = newItem.value.name.trim()
-  if (!name || newItem.value.price <= 0) {
-    alert('請填寫餐點名稱及有效價格')
-    return
-  }
-
-  try {
-    await restaurantStore.addMenuItem(activeRestaurantId.value, { ...newItem.value, name })
-    newItem.value = { name: '', price: 0, category: '食物' }
-  } catch (error) {
-    notifyError(error)
-  }
-}
-
-function startEditItem(id: string, item: MenuItem) {
-  editItemId.value = id
-  editItem.value = { name: item.name, price: item.price, category: item.category }
-}
-
-async function saveMenuItem() {
-  if (!activeRestaurantId.value || !editItemId.value) return
-  const name = editItem.value.name.trim()
-  if (!name || editItem.value.price <= 0) {
-    alert('請填寫餐點名稱及有效價格')
-    return
-  }
-
-  try {
-    await restaurantStore.updateMenuItem(activeRestaurantId.value, editItemId.value, {
-      ...editItem.value,
-      name,
-    })
-    editItemId.value = null
-  } catch (error) {
-    notifyError(error)
-  }
-}
-
-function cancelEditItem() {
-  editItemId.value = null
-}
-
-async function deleteMenuItem(itemId: string) {
-  if (!activeRestaurantId.value) return
-  if (confirm('確定要刪除此餐點？')) {
-    try {
-      await restaurantStore.deleteMenuItem(activeRestaurantId.value, itemId)
-      if (editItemId.value === itemId) editItemId.value = null
-    } catch (error) {
-      notifyError(error)
-    }
+    pageError.value = getErrorMessage(error, '初始化後台資料失敗，請稍後再試')
+    toast.error(pageError.value)
+  } finally {
+    initializing.value = false
   }
 }
 
 async function resetMockData() {
-  if (!confirm('確定要重置 mock 資料嗎？這會清空現有訂單並還原預設餐廳。')) {
+  if (!confirm('確定要重置 Mock 資料嗎？這會清空現有訂單並還原預設餐廳。')) {
     return
   }
 
+  resetting.value = true
+  pageError.value = ''
   try {
     await restaurantStore.resetMockData()
     await orderStore.initialize(true)
-    activeRestaurantId.value = null
-    editItemId.value = null
-    editRestaurantId.value = null
     toast.success('Mock 資料已重置')
   } catch (error) {
-    notifyError(error)
+    pageError.value = getErrorMessage(error, '重置 Mock 資料失敗，請稍後再試')
+    toast.error(pageError.value)
+  } finally {
+    resetting.value = false
   }
 }
 </script>
 
 <template>
-  <section class="page-section">
+  <section class="page-section admin-page" aria-labelledby="admin-title">
     <div class="section-header">
-      <h1>後台設定</h1>
-      <button class="btn btn-secondary" @click="resetMockData">重置 Mock 資料</button>
+      <div>
+        <h1 id="admin-title">後台設定</h1>
+        <p class="page-description">管理餐廳、餐點與餐點分類。</p>
+      </div>
+      <button class="btn btn-secondary" type="button" :disabled="pageBusy" @click="resetMockData">
+        {{ resetting ? '重置中…' : '重置 Mock 資料' }}
+      </button>
     </div>
 
-    <p v-if="restaurantStore.errorMessage" class="error-text">{{ restaurantStore.errorMessage }}</p>
+    <p v-if="pageError || restaurantStore.errorMessage" class="page-error" role="alert">
+      {{ pageError || restaurantStore.errorMessage }}
+    </p>
 
-    <!-- ── Add Restaurant ───────────────────────────────── -->
-    <div class="card">
-      <h2>新增餐廳</h2>
-      <div class="inline-form">
-        <input
-          v-model="newRestaurantName"
-          class="form-input"
-          type="text"
-          placeholder="餐廳名稱"
-          @keyup.enter="addRestaurant"
-        />
-        <button class="btn btn-primary" @click="addRestaurant">新增</button>
-      </div>
-    </div>
+    <div v-if="initializing" class="loading-state" role="status">後台資料載入中…</div>
 
-    <!-- ── Restaurant List ─────────────────────────────── -->
-    <div class="card">
-      <h2>餐廳管理</h2>
+    <template v-else>
+      <nav class="admin-tabs" aria-label="後台管理項目">
+        <button
+          type="button"
+          class="admin-tab"
+          :class="{ active: activeSection === 'restaurants' }"
+          :aria-current="activeSection === 'restaurants' ? 'page' : undefined"
+          @click="activeSection = 'restaurants'"
+        >
+          餐廳與餐點
+        </button>
+        <button
+          type="button"
+          class="admin-tab"
+          :class="{ active: activeSection === 'categories' }"
+          :aria-current="activeSection === 'categories' ? 'page' : undefined"
+          @click="activeSection = 'categories'"
+        >
+          餐點分類
+        </button>
+      </nav>
 
-      <div v-if="restaurantStore.restaurants.length === 0" class="empty-state">
-        尚未建立任何餐廳
-      </div>
-
-      <div v-for="r in restaurantStore.restaurants" :key="r.id" class="restaurant-block">
-        <!-- Restaurant Row -->
-        <div class="restaurant-row">
-          <template v-if="editRestaurantId === r.id">
-            <input v-model="editRestaurantName" class="form-input" @keyup.enter="saveRestaurant" />
-            <button class="btn btn-sm btn-primary" @click="saveRestaurant">儲存</button>
-            <button class="btn btn-sm btn-secondary" @click="cancelEditRestaurant">取消</button>
-          </template>
-          <template v-else>
-            <span class="restaurant-name">{{ r.name }}</span>
-            <span class="menu-count">{{ r.menuItems.length }} 項餐點</span>
-            <button
-              class="btn btn-sm btn-secondary"
-              @click="startEditRestaurant(r.id, r.name)"
-            >
-              編輯
-            </button>
-            <button class="btn btn-sm btn-info" @click="toggleRestaurant(r.id)">
-              {{ activeRestaurantId === r.id ? '收起餐點' : '管理餐點' }}
-            </button>
-            <button class="btn btn-sm btn-danger" @click="deleteRestaurant(r.id)">刪除</button>
-          </template>
-        </div>
-
-        <!-- Menu Items Panel -->
-        <div v-if="activeRestaurantId === r.id" class="menu-panel">
-          <h3>餐點列表</h3>
-
-          <!-- Add Menu Item Form -->
-          <div class="inline-form menu-add-form">
-            <input
-              v-model="newItem.name"
-              class="form-input"
-              type="text"
-              placeholder="餐點名稱"
-            />
-            <input
-              v-model.number="newItem.price"
-              class="form-input price-input"
-              type="number"
-              min="1"
-              placeholder="單價"
-            />
-            <select v-model="newItem.category" class="form-select category-select">
-              <option v-for="cat in CATEGORIES" :key="cat" :value="cat">{{ cat }}</option>
-            </select>
-            <button class="btn btn-primary btn-sm" @click="addMenuItem">＋ 新增</button>
-          </div>
-
-          <!-- Menu Items Table -->
-          <div v-if="r.menuItems.length === 0" class="hint">尚無餐點，請新增</div>
-          <div v-else class="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  <th>餐點名稱</th>
-                  <th>類別</th>
-                  <th>單價</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="item in r.menuItems" :key="item.id">
-                  <template v-if="editItemId === item.id">
-                    <td>
-                      <input v-model="editItem.name" class="form-input" />
-                    </td>
-                    <td>
-                      <select v-model="editItem.category" class="form-select">
-                        <option v-for="cat in CATEGORIES" :key="cat" :value="cat">
-                          {{ cat }}
-                        </option>
-                      </select>
-                    </td>
-                    <td>
-                      <input
-                        v-model.number="editItem.price"
-                        class="form-input price-input"
-                        type="number"
-                        min="1"
-                      />
-                    </td>
-                    <td class="actions">
-                      <button class="btn btn-sm btn-primary" @click="saveMenuItem">儲存</button>
-                      <button class="btn btn-sm btn-secondary" @click="cancelEditItem">
-                        取消
-                      </button>
-                    </td>
-                  </template>
-                  <template v-else>
-                    <td>{{ item.name }}</td>
-                    <td>
-                      <span class="category-badge">{{ item.category }}</span>
-                    </td>
-                    <td class="price">{{ item.price }} 元</td>
-                    <td class="actions">
-                      <button
-                        class="btn btn-sm btn-secondary"
-                        @click="startEditItem(item.id, item)"
-                      >
-                        編輯
-                      </button>
-                      <button
-                        class="btn btn-sm btn-danger"
-                        @click="deleteMenuItem(item.id)"
-                      >
-                        刪除
-                      </button>
-                    </td>
-                  </template>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    </div>
+      <RestaurantManagement v-if="activeSection === 'restaurants'" />
+      <CategoryManagement v-else />
+    </template>
   </section>
 </template>
 
 <style scoped>
-.error-text {
-  margin-bottom: 12px;
-  color: #c0392b;
+.admin-page {
+  width: 100%;
 }
 
-.restaurant-block {
-  border: 1px solid #e0e0e0;
+.section-header {
+  align-items: flex-start;
+}
+
+.page-description {
+  margin-top: 2px;
+  color: #718096;
+  font-size: 0.9rem;
+}
+
+.page-error {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  color: #9b2c2c;
+  background: #fff5f5;
+  border: 1px solid #feb2b2;
   border-radius: 6px;
-  margin-bottom: 16px;
-  overflow: hidden;
 }
-.restaurant-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  background: #fafafa;
-  flex-wrap: wrap;
-}
-.restaurant-name {
-  font-weight: bold;
-  font-size: 1rem;
-  flex: 1;
-  min-width: 120px;
-}
-.menu-count {
-  font-size: 0.85rem;
-  color: #888;
-}
-.menu-panel {
-  padding: 16px;
+
+.loading-state {
+  padding: 48px 24px;
+  color: #718096;
+  text-align: center;
   background: #fff;
-  border-top: 1px solid #e0e0e0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
 }
-.menu-panel h3 {
-  font-size: 0.95rem;
-  margin-bottom: 12px;
-  color: #555;
+
+.admin-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  padding: 4px;
+  background: #e2e8f0;
+  border-radius: 8px;
 }
-.menu-add-form {
-  margin-bottom: 16px;
-  flex-wrap: wrap;
+
+.admin-tab {
+  flex: 1;
+  padding: 9px 16px;
+  color: #4a5568;
+  font: inherit;
+  font-weight: 600;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
 }
-.price-input {
-  width: 90px;
+
+.admin-tab.active {
+  color: #2c5282;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
 }
-.category-select {
-  width: 90px;
-}
-.category-badge {
-  display: inline-block;
-  padding: 2px 8px;
-  background: #e8f0fe;
-  color: #2f5f95;
-  border-radius: 12px;
-  font-size: 0.8rem;
-}
-.price {
-  color: #e74c3c;
-  font-weight: bold;
-}
-.actions {
-  white-space: nowrap;
-}
-.actions .btn + .btn {
-  margin-left: 4px;
+
+@media (max-width: 600px) {
+  .section-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .section-header .btn {
+    width: 100%;
+  }
 }
 </style>

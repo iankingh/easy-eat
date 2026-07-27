@@ -6,19 +6,23 @@ const { toasts, dismiss } = useToast()
 
 <template>
   <Teleport to="body">
-    <div class="toast-container" aria-live="polite">
-      <Transition name="toast" v-for="toast in toasts" :key="toast.id">
-        <div class="toast" :class="`toast--${toast.type}`" role="alert">
-          <span class="toast-icon">
-            <template v-if="toast.type === 'success'">✓</template>
-            <template v-else-if="toast.type === 'error'">✕</template>
-            <template v-else>ℹ</template>
-          </span>
-          <span class="toast-message">{{ toast.message }}</span>
-          <button class="toast-close" @click="dismiss(toast.id)" aria-label="關閉">×</button>
-        </div>
-      </Transition>
-    </div>
+    <TransitionGroup name="toast" tag="div" class="toast-container" aria-live="polite">
+      <div
+        v-for="toast in toasts"
+        :key="toast.id"
+        class="toast"
+        :class="`toast--${toast.type}`"
+        role="alert"
+      >
+        <span class="toast-icon">
+          <template v-if="toast.type === 'success'">✓</template>
+          <template v-else-if="toast.type === 'error'">✕</template>
+          <template v-else>ℹ</template>
+        </span>
+        <span class="toast-message">{{ toast.message }}</span>
+        <button class="toast-close" aria-label="關閉" @click="dismiss(toast.id)">×</button>
+      </div>
+    </TransitionGroup>
   </Teleport>
 </template>
 

@@ -1,15 +1,11 @@
-# easy-eat-front
+# Easy Eat Frontend
 
-Vue 3 + TypeScript 的訂餐系統前端，已完成「無後端可運行」的 mock 架構。
+Easy Eat 的 Vue 3 + TypeScript 單頁應用程式。現階段由 Mock API 與 `localStorage` 提供可持久化的前端資料層，不需啟動後端服務。
 
-## 新版工具鏈
+## 環境需求
 
-- Vue 3.5
-- Vue Router 4.6
-- Pinia 3
-- Vite 8
-- TypeScript 6
-- vue-tsc 3
+- Node.js `^20.19.0`、`^22.13.0` 或 `>=24`
+- npm
 
 ## 快速開始
 
@@ -20,67 +16,85 @@ npm run dev
 
 ## 目前功能
 
-- 訂單清單
-- 新增訂單
-- 訂單明細
-- 餐點統計
-- 後台管理（餐廳/餐點 CRUD）
-- Mock 資料重置
+- 訂單草稿建立、保存、編輯與送出
+- `draft`／`pending` 訂單內容編輯
+- `pending` 訂單完成或取消
+- 訂單關鍵字搜尋、狀態／餐廳／日期篩選、多欄排序及每頁 20 筆分頁
+- 餐點統計（排除草稿與取消訂單）
+- 餐廳、餐點、餐點分類 CRUD 與啟用狀態管理
+- 刪除餐廳、餐點及分類時的關聯資料保護
+- Mock schema 自動遷移及預設資料重置
 
-## 前端架構
+## 架構
 
 ```text
 src/
-    api/                # API 介面層（目前接 mock server）
-        orderApi.ts
-        restaurantApi.ts
-    mock/               # Mock backend（localStorage + async latency）
-        db.ts
-        server.ts
-    services/           # 服務層（封裝業務行為/資料轉換）
-        orderService.ts
-        restaurantService.ts
-    stores/             # Pinia 狀態管理（頁面唯一資料入口）
-        order.ts
-        restaurant.ts
-    types/              # 共用型別
-        order.ts
-        restaurant.ts
-    views/              # 頁面
-    components/         # 共用元件
+├── api/          # 前端 API 介面，目前委派給 Mock Server
+├── components/   # 共用與訂單元件
+├── composables/  # Composition API 工具
+├── constants/    # 狀態標籤、轉換規則與分頁設定
+├── mock/         # localStorage 資料庫、遷移與非同步 Mock Server
+├── router/       # Vue Router
+├── services/     # 業務資料轉換與 API 封裝
+├── stores/       # Pinia 狀態、搜尋、篩選、排序與分頁
+├── types/        # Order、Restaurant、MenuItem、MenuCategory 型別
+├── utils/        # 共用工具
+└── views/        # 路由頁面
 ```
 
-## 資料流
+資料流：
 
-頁面互動路徑如下：
+```text
+View → Pinia Store → Service → API → Mock Server → localStorage
+```
 
-1. View 觸發 Store Action
-2. Store 呼叫 Service
-3. Service 呼叫 API
-4. API 轉到 Mock Server
-5. Mock Server 讀寫 localStorage（模擬資料庫）
-6. 回傳結果後更新 Store，再反映到 UI
+Mock DB 使用 `easy-eat-mock-db-v1`，目前 schema 版本為 `2`。讀取舊資料時會保留可用的餐廳、餐點及訂單，將舊 `category` 字串遷移為 `categoryId`，並為缺少的 `enabled` 補上啟用狀態。
 
-## Mock 設計
+## 訂單規則
 
-- Mock DB 儲存在 localStorage key: `easy-eat-mock-db-v1`
-- 預設資料包含餐廳與餐點
-- 所有 API 為 async，含模擬延遲（貼近真實後端）
-- 可在後台頁面使用「重置 Mock 資料」恢復預設狀態
+```text
+draft ──送出──> pending ──> completed
+                         └─> cancelled
+```
+
+- `draft` 與 `pending` 可編輯內容。
+- `draft` 儲存後會持久化，可稍後繼續編輯及送出。
+- 停用的餐廳、餐點或分類不可用於建立、更新或送出訂單。
+
+## 現有路由
+
+| 路徑               | 功能                 |
+| ------------------ | -------------------- |
+| `/`                | 訂單清單             |
+| `/orders/add`      | 新增訂單             |
+| `/orders/:id/edit` | 編輯草稿或處理中訂單 |
+| `/orders/:id`      | 訂單明細             |
+| `/statistics`      | 餐點統計             |
+| `/admin`           | 餐廳、餐點與分類管理 |
+| `/:pathMatch(.*)*` | 找不到頁面（404）    |
 
 ## 開發指令
 
 ```bash
-# 啟動開發
-npm run dev
-
-# 型別檢查 + 打包
-npm run build
-
-# 僅型別檢查
-npm run type-check
+npm run dev            # 開發伺服器
+npm run build          # 型別檢查並建立正式版
+npm run build-only     # 僅建立正式版
+npm run preview        # 預覽正式版
+npm run type-check     # TypeScript / Vue 型別檢查
+npm test               # 執行測試
+npm run test:watch     # 監看模式測試
+npm run test:coverage  # 測試覆蓋率
+npm run lint           # ESLint 檢查
+npm run lint:fix       # 自動修正 ESLint 問題
+npm run format         # Prettier 格式化
+npm run format:check   # Prettier 格式檢查
+npm run check          # type-check + lint + format:check
 ```
 
-## 未來串接真後端方式
+## 相關文件
 
-只需替換 `src/api/*.ts` 的實作（改為 fetch/axios 呼叫後端），其餘層（services/stores/views）可維持不動。
+- [專案入口](../README.md)
+- [Mock API 與資料模型](../API.md)
+- [外部參考來源](../docs/REFERENCES.md)
+
+舊 `reference/` 目錄已移除；外部設計與實作參考請以 [`docs/REFERENCES.md`](../docs/REFERENCES.md) 為準。

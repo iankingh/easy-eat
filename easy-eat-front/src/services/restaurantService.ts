@@ -1,5 +1,7 @@
 import { restaurantApi } from '@/api/restaurantApi'
 import type {
+  MenuCategory,
+  MenuCategoryInput,
   MenuItem,
   MenuItemInput,
   Restaurant,
@@ -19,6 +21,10 @@ export const restaurantService = {
     return restaurantApi.updateRestaurant(id, payload)
   },
 
+  setRestaurantEnabled(id: string, enabled: boolean): Promise<Restaurant> {
+    return restaurantApi.setRestaurantEnabled(id, enabled)
+  },
+
   deleteRestaurant(id: string): Promise<void> {
     return restaurantApi.removeRestaurant(id)
   },
@@ -35,8 +41,36 @@ export const restaurantService = {
     return restaurantApi.updateMenuItem(restaurantId, menuItemId, payload)
   },
 
+  setMenuItemEnabled(
+    restaurantId: string,
+    menuItemId: string,
+    enabled: boolean,
+  ): Promise<MenuItem> {
+    return restaurantApi.setMenuItemEnabled(restaurantId, menuItemId, enabled)
+  },
+
   deleteMenuItem(restaurantId: string, menuItemId: string): Promise<void> {
     return restaurantApi.removeMenuItem(restaurantId, menuItemId)
+  },
+
+  getCategories(): Promise<MenuCategory[]> {
+    return restaurantApi.listCategories()
+  },
+
+  createCategory(payload: MenuCategoryInput): Promise<MenuCategory> {
+    return restaurantApi.createCategory(payload)
+  },
+
+  updateCategory(id: string, payload: MenuCategoryInput): Promise<MenuCategory> {
+    return restaurantApi.updateCategory(id, payload)
+  },
+
+  setCategoryEnabled(id: string, enabled: boolean): Promise<MenuCategory> {
+    return restaurantApi.setCategoryEnabled(id, enabled)
+  },
+
+  deleteCategory(id: string): Promise<void> {
+    return restaurantApi.removeCategory(id)
   },
 
   resetMockData(): Promise<void> {

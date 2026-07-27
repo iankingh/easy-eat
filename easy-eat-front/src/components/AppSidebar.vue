@@ -3,7 +3,7 @@ import { RouterLink } from 'vue-router'
 </script>
 
 <template>
-  <nav class="sidebar">
+  <nav class="sidebar" aria-label="主要導覽">
     <ul>
       <li>
         <RouterLink to="/">所有訂餐清單</RouterLink>
@@ -60,5 +60,24 @@ import { RouterLink } from 'vue-router'
   background-color: #4a90d9;
   color: #fff;
   border-left-color: #2c6fad;
+}
+
+@media (max-width: 800px) {
+  .sidebar {
+    width: 100%;
+    min-width: 0;
+    padding: 10px 16px;
+    overflow-x: auto;
+  }
+
+  .sidebar ul {
+    display: flex;
+    gap: 8px;
+    min-width: max-content;
+  }
+
+  .sidebar li {
+    margin-bottom: 0;
+  }
 }
 </style>

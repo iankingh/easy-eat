@@ -23,6 +23,8 @@ vi.mock('@/services/orderService', () => ({
   orderService: {
     getOrders: vi.fn(async () => []),
     createOrder: vi.fn(async () => makeOrder()),
+    updateOrder: vi.fn(async () => makeOrder()),
+    submitOrder: vi.fn(async () => makeOrder({ status: 'pending' })),
     deleteOrder: vi.fn(async () => undefined),
     updateOrderStatus: vi.fn(async (_id: string, status: string) =>
       makeOrder({ status: status as Order['status'] }),
@@ -74,6 +76,16 @@ describe('useOrderStore – initialize', () => {
 
     expect(orderService.getOrders).toHaveBeenCalledTimes(2)
   })
+
+  it('stores service errors and clears loading state', async () => {
+    vi.mocked(orderService.getOrders).mockRejectedValueOnce(new Error('載入失敗'))
+    const store = useOrderStore()
+
+    await expect(store.initialize()).rejects.toThrow('載入失敗')
+
+    expect(store.errorMessage).toBe('載入失敗')
+    expect(store.loading).toBe(false)
+  })
 })
 
 describe('useOrderStore – createOrder', () => {
@@ -83,7 +95,7 @@ describe('useOrderStore – createOrder', () => {
     const newOrder = makeOrder({ id: 'new1' })
     vi.mocked(orderService.createOrder).mockResolvedValueOnce(newOrder)
 
-    const result = await store.createOrder('r1', 'HOT8', newOrder.items)
+    const result = await store.createOrder('r1', newOrder.items)
 
     expect(result.id).toBe('new1')
     expect(store.orders[0].id).toBe('new1')
@@ -115,6 +127,34 @@ describe('useOrderStore – updateOrderStatus', () => {
 
     expect(store.orders[0].status).toBe('completed')
   })
+
+  describe('useOrderStore – draft workflow', () => {
+    it('saves a draft and prepends it to the list', async () => {
+      const store = useOrderStore()
+      const draft = makeOrder({ id: 'draft-1', status: 'draft' })
+      vi.mocked(orderService.createOrder).mockResolvedValueOnce(draft)
+
+      const result = await store.saveDraft('r1', draft.items)
+
+      expect(result.status).toBe('draft')
+      expect(orderService.createOrder).toHaveBeenCalledWith(
+        expect.objectContaining({ restaurantId: 'r1' }),
+        'draft',
+      )
+    })
+
+    it('submits a stored draft', async () => {
+      const store = useOrderStore()
+      store.orders = [makeOrder({ id: 'draft-1', status: 'draft' })]
+      vi.mocked(orderService.submitOrder).mockResolvedValueOnce(
+        makeOrder({ id: 'draft-1', status: 'pending' }),
+      )
+
+      await store.submitDraft('draft-1')
+
+      expect(store.orders[0].status).toBe('pending')
+    })
+  })
 })
 
 describe('useOrderStore – getOrderById', () => {
@@ -138,9 +178,24 @@ describe('useOrderStore – getOrderById', () => {
 describe('useOrderStore – filteredOrders', () => {
   function setupOrders(store: ReturnType<typeof useOrderStore>) {
     store.orders = [
-      makeOrder({ id: 'o1', status: 'pending', restaurantName: 'HOT8', createdAt: '2026-06-20T10:00:00Z' }),
-      makeOrder({ id: 'o2', status: 'completed', restaurantName: '新巴克', createdAt: '2026-06-21T10:00:00Z' }),
-      makeOrder({ id: 'o3', status: 'cancelled', restaurantName: 'HOT8', createdAt: '2026-06-22T10:00:00Z' }),
+      makeOrder({
+        id: 'o1',
+        status: 'pending',
+        restaurantName: 'HOT8',
+        createdAt: '2026-06-20T10:00:00Z',
+      }),
+      makeOrder({
+        id: 'o2',
+        status: 'completed',
+        restaurantName: '新巴克',
+        createdAt: '2026-06-21T10:00:00Z',
+      }),
+      makeOrder({
+        id: 'o3',
+        status: 'cancelled',
+        restaurantName: 'HOT8',
+        createdAt: '2026-06-22T10:00:00Z',
+      }),
     ]
   }
 
@@ -172,6 +227,16 @@ describe('useOrderStore – filteredOrders', () => {
     store.filterDateTo = '2026-06-21'
     expect(store.filteredOrders).toHaveLength(1)
     expect(store.filteredOrders[0].id).toBe('o2')
+  })
+
+  it('filters by the local calendar date through the end of the day', () => {
+    const store = useOrderStore()
+    const localDate = new Date(2026, 5, 21, 23, 59, 59, 999)
+    store.orders = [makeOrder({ id: 'late-order', createdAt: localDate.toISOString() })]
+    store.filterDateFrom = '2026-06-21'
+    store.filterDateTo = '2026-06-21'
+
+    expect(store.filteredOrders.map((order) => order.id)).toEqual(['late-order'])
   })
 })
 
@@ -210,5 +275,39 @@ describe('useOrderStore – resetFilters', () => {
     expect(store.filterRestaurant).toBe('')
     expect(store.filterDateFrom).toBe('')
     expect(store.filterDateTo).toBe('')
+  })
+
+  describe('useOrderStore – sorting and pagination', () => {
+    it('sorts by amount and paginates with 20 rows per page', () => {
+      const store = useOrderStore()
+      store.orders = Array.from({ length: 25 }, (_, index) =>
+        makeOrder({
+          id: `o${index}`,
+          orderId: `order-${index}`,
+          totalAmount: index,
+          createdAt: `2026-06-${String((index % 28) + 1).padStart(2, '0')}T10:00:00Z`,
+        }),
+      )
+      store.sortBy = 'totalAmount'
+      store.sortDirection = 'desc'
+
+      expect(store.totalPages).toBe(2)
+      expect(store.paginatedOrders).toHaveLength(20)
+      expect(store.paginatedOrders[0].totalAmount).toBe(24)
+
+      store.currentPage = 2
+      expect(store.paginatedOrders).toHaveLength(5)
+    })
+
+    it('searches order id, restaurant and item text', () => {
+      const store = useOrderStore()
+      store.orders = [
+        makeOrder({ id: 'o1', orderId: 'SPECIAL-001' }),
+        makeOrder({ id: 'o2', restaurantName: '測試餐廳' }),
+      ]
+      store.searchQuery = 'special'
+
+      expect(store.filteredOrders.map((order) => order.id)).toEqual(['o1'])
+    })
   })
 })

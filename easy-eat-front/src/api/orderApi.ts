@@ -4,9 +4,18 @@ import {
   getOrderById,
   listMealStatistics,
   listOrders,
+  submitOrder,
+  updateOrder,
   updateOrderStatus,
 } from '@/mock/server'
-import type { CreateOrderInput, MealStatistic, Order, UpdateOrderStatusInput } from '@/types/order'
+import type {
+  CreateOrderInput,
+  EditableOrderStatus,
+  MealStatistic,
+  Order,
+  UpdateOrderInput,
+  UpdateOrderStatusInput,
+} from '@/types/order'
 
 export const orderApi = {
   list(): Promise<Order[]> {
@@ -17,8 +26,16 @@ export const orderApi = {
     return getOrderById(id)
   },
 
-  create(payload: CreateOrderInput): Promise<Order> {
-    return createOrder(payload)
+  create(payload: CreateOrderInput, status: EditableOrderStatus = 'pending'): Promise<Order> {
+    return createOrder(payload, status)
+  },
+
+  update(id: string, payload: UpdateOrderInput): Promise<Order> {
+    return updateOrder(id, payload)
+  },
+
+  submit(id: string): Promise<Order> {
+    return submitOrder(id)
   },
 
   remove(id: string): Promise<void> {

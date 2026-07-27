@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import OrderListView from '../views/OrderListView.vue'
+import OrderListView from '@/views/OrderListView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -12,22 +12,32 @@ const router = createRouter({
     {
       path: '/orders/add',
       name: 'order-add',
-      component: () => import('../views/OrderAddView.vue'),
+      component: () => import('@/views/OrderAddView.vue'),
+    },
+    {
+      path: '/orders/:id/edit',
+      name: 'order-edit',
+      component: () => import('@/views/OrderEditView.vue'),
     },
     {
       path: '/orders/:id',
       name: 'order-detail',
-      component: () => import('../views/OrderDetailView.vue'),
+      component: () => import('@/views/OrderDetailView.vue'),
     },
     {
       path: '/statistics',
       name: 'statistics',
-      component: () => import('../views/MealStatisticsView.vue'),
+      component: () => import('@/views/MealStatisticsView.vue'),
     },
     {
       path: '/admin',
       name: 'admin',
-      component: () => import('../views/AdminView.vue'),
+      component: () => import('@/views/AdminView.vue'),
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: () => import('@/views/NotFoundView.vue'),
     },
   ],
 })

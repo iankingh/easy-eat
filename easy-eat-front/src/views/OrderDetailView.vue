@@ -1,45 +1,71 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useOrderStore } from '../stores/order'
-import type { OrderStatus } from '../stores/order'
+import OrderStatusBadge from '@/components/orders/OrderStatusBadge.vue'
 import { useToast } from '@/composables/useToast'
+import { useOrderStore } from '@/stores/order'
+import type { OrderStatus } from '@/types/order'
+import { getErrorMessage } from '@/utils/error'
+
+type FinalStatus = Extract<OrderStatus, 'completed' | 'cancelled'>
 
 const route = useRoute()
 const router = useRouter()
 const orderStore = useOrderStore()
 const toast = useToast()
+const actionLoading = ref(false)
+
+const orderId = computed(() => (typeof route.params.id === 'string' ? route.params.id : ''))
+const order = computed(() => orderStore.getOrderById(orderId.value))
+const canEdit = computed(() => order.value?.status === 'draft' || order.value?.status === 'pending')
+const isReadOnly = computed(
+  () => order.value?.status === 'completed' || order.value?.status === 'cancelled',
+)
 
 onMounted(() => {
   void initializeView()
 })
 
 async function initializeView() {
-  if (!orderStore.initialized) {
-    try {
-      await orderStore.initialize()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '載入訂單失敗，請稍後再試')
-    }
-  }
-}
-
-const order = computed(() => orderStore.getOrderById(route.params.id as string))
-
-async function changeStatus(status: OrderStatus) {
-  if (!order.value) return
   try {
-    await orderStore.updateOrderStatus(order.value.id, status)
-    toast.success('訂單狀態已更新')
+    await orderStore.initialize()
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : '更新狀態失敗')
+    toast.error(getErrorMessage(error, '載入訂單失敗，請稍後再試'))
   }
 }
 
-const STATUS_LABEL: Record<OrderStatus, string> = {
-  pending: '處理中',
-  completed: '已完成',
-  cancelled: '已取消',
+async function submitDraft() {
+  const currentOrder = order.value
+  if (!currentOrder || currentOrder.status !== 'draft') return
+
+  actionLoading.value = true
+  try {
+    await orderStore.submitDraft(currentOrder.id)
+    toast.success('訂單已送出')
+  } catch (error) {
+    toast.error(getErrorMessage(error, '送出訂單失敗'))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function changeStatus(status: FinalStatus) {
+  const currentOrder = order.value
+  if (!currentOrder || currentOrder.status !== 'pending') return
+
+  actionLoading.value = true
+  try {
+    await orderStore.updateOrderStatus(currentOrder.id, status)
+    toast.success(status === 'completed' ? '訂單已標記完成' : '訂單已取消')
+  } catch (error) {
+    toast.error(getErrorMessage(error, '更新狀態失敗'))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+function goBack() {
+  void router.push({ name: 'order-list' })
 }
 </script>
 
@@ -47,12 +73,16 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   <section class="page-section">
     <div class="section-header">
       <h1>訂單詳細內容</h1>
-      <button class="btn btn-secondary" @click="router.back()">← 返回</button>
+      <button class="btn btn-secondary" @click="goBack">← 返回清單</button>
     </div>
 
-    <div v-if="!order" class="empty-state">
+    <div v-if="orderStore.loading && !orderStore.initialized" class="empty-state">
+      <p>訂單載入中...</p>
+    </div>
+
+    <div v-else-if="!order" class="empty-state">
       <p>找不到此訂單</p>
-      <RouterLink to="/" class="btn btn-primary">返回清單</RouterLink>
+      <RouterLink :to="{ name: 'order-list' }" class="btn btn-primary">返回清單</RouterLink>
     </div>
 
     <div v-else class="detail-card">
@@ -71,21 +101,43 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
         </div>
         <div class="meta-item">
           <span class="meta-label">訂單狀態</span>
-          <span class="status-badge" :class="`status-${order.status}`">
-            {{ STATUS_LABEL[order.status] ?? order.status }}
-          </span>
+          <OrderStatusBadge :status="order.status" />
         </div>
       </div>
 
-      <!-- Status actions -->
-      <div v-if="order.status === 'pending'" class="status-actions">
-        <button class="btn btn-sm btn-success" @click="changeStatus('completed')">
-          ✓ 標記完成
+      <div v-if="canEdit" class="status-actions">
+        <RouterLink
+          :to="{ name: 'order-edit', params: { id: order.id } }"
+          class="btn btn-sm btn-info"
+        >
+          編輯訂單
+        </RouterLink>
+        <button
+          v-if="order.status === 'draft'"
+          class="btn btn-sm btn-primary"
+          :disabled="actionLoading"
+          @click="submitDraft"
+        >
+          送出訂單
         </button>
-        <button class="btn btn-sm btn-warning" @click="changeStatus('cancelled')">
-          ✕ 取消訂單
-        </button>
+        <template v-if="order.status === 'pending'">
+          <button
+            class="btn btn-sm btn-success"
+            :disabled="actionLoading"
+            @click="changeStatus('completed')"
+          >
+            ✓ 標記完成
+          </button>
+          <button
+            class="btn btn-sm btn-warning"
+            :disabled="actionLoading"
+            @click="changeStatus('cancelled')"
+          >
+            ✕ 取消訂單
+          </button>
+        </template>
       </div>
+      <p v-else-if="isReadOnly" class="read-only-note">此訂單已結案，內容僅供檢視。</p>
 
       <h2 class="sub-heading">訂單明細</h2>
       <div class="table-wrapper">
@@ -127,88 +179,85 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   border-radius: 8px;
   padding: 24px;
 }
+
 .detail-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 24px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 12px 24px;
+  margin-bottom: 20px;
   padding-bottom: 20px;
   border-bottom: 1px solid #eee;
 }
+
 .meta-item {
   display: flex;
   gap: 12px;
 }
+
 .meta-label {
+  min-width: 80px;
   font-weight: bold;
   color: #555;
-  min-width: 80px;
 }
+
 .meta-value {
   color: #333;
 }
+
 .meta-value.mono {
   font-family: monospace;
   font-size: 0.9rem;
 }
-.sub-heading {
-  font-size: 1.1rem;
-  margin-bottom: 12px;
-  color: #333;
-}
-.amount {
-  color: #e74c3c;
-  font-weight: bold;
-}
-.total-label {
-  text-align: right;
-  font-weight: bold;
-  background: #f5f5f5;
-}
-.total-amount {
-  font-size: 1.1rem;
-  font-weight: bold;
-  color: #b03a2e;
-  background: #fff8e1;
-}
-.status-badge {
-  display: inline-block;
-  padding: 2px 10px;
-  border-radius: 12px;
-  font-size: 0.82rem;
-  font-weight: 600;
-}
-.status-pending {
-  background: #fef3cd;
-  color: #856404;
-}
-.status-completed {
-  background: #d4edda;
-  color: #155724;
-}
-.status-cancelled {
-  background: #f8d7da;
-  color: #721c24;
-}
+
 .status-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 20px;
 }
+
+.read-only-note {
+  margin-bottom: 20px;
+  padding: 10px 12px;
+  border-radius: 5px;
+  background: #f5f5f5;
+  color: #777;
+}
+
+.sub-heading {
+  margin-bottom: 12px;
+  font-size: 1.1rem;
+  color: #333;
+}
+
+.amount {
+  font-weight: bold;
+  color: #e74c3c;
+}
+
+.total-label {
+  text-align: right;
+}
+
+.total-amount {
+  font-size: 1.1rem;
+  color: #b03a2e;
+  background: #fff8e1;
+}
+
 .btn-success {
   background: #27ae60;
   color: #fff;
-  border: none;
 }
-.btn-success:hover {
-  background: #219a52;
-}
+
 .btn-warning {
   background: #e67e22;
   color: #fff;
-  border: none;
 }
-.btn-warning:hover {
-  background: #ca6f1e;
+
+@media (max-width: 720px) {
+  .detail-meta {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

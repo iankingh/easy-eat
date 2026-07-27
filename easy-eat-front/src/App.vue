@@ -1,24 +1,25 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { RouterView } from 'vue-router'
-import AppSidebar from './components/AppSidebar.vue'
-import ToastNotification from './components/ToastNotification.vue'
-import { useOrderStore } from './stores/order'
-import { useRestaurantStore } from './stores/restaurant'
+import AppSidebar from '@/components/AppSidebar.vue'
+import ToastNotification from '@/components/ToastNotification.vue'
+import { useOrderStore } from '@/stores/order'
+import { useRestaurantStore } from '@/stores/restaurant'
 
 const orderStore = useOrderStore()
 const restaurantStore = useRestaurantStore()
 
-const appLoading = computed(() => !orderStore.initialized || !restaurantStore.initialized)
+const bootstrapping = ref(true)
 const appError = computed(() => orderStore.errorMessage || restaurantStore.errorMessage)
 
-onMounted(async () => {
-  try {
-    await Promise.all([restaurantStore.initialize(), orderStore.initialize()])
-  } catch (error) {
-    console.error(error)
-  }
+onMounted(() => {
+  void initializeApp()
 })
+
+async function initializeApp() {
+  await Promise.allSettled([restaurantStore.initialize(), orderStore.initialize()])
+  bootstrapping.value = false
+}
 </script>
 
 <template>
@@ -29,9 +30,9 @@ onMounted(async () => {
     <div class="app-body">
       <AppSidebar />
       <main class="app-main">
-        <div v-if="appLoading" class="app-status">資料載入中...</div>
+        <div v-if="bootstrapping" class="app-status">資料載入中...</div>
         <div v-else-if="appError" class="app-status app-status-error">{{ appError }}</div>
-        <RouterView />
+        <RouterView v-if="!bootstrapping" />
       </main>
     </div>
     <footer class="app-footer">
