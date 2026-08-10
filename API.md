@@ -39,6 +39,17 @@ interface CreateOrderInput {
 }
 
 type UpdateOrderInput = CreateOrderInput;
+
+interface UpdateOrderStatusInput {
+  status: OrderStatus;
+}
+
+interface MealStatistic {
+  name: string;
+  price: number;
+  quantity: number;
+  total: number;
+}
 ```
 
 狀態轉換：

@@ -22,11 +22,13 @@ easy-eat/
 │       ├── api/          # API 介面層
 │       ├── components/   # 共用 Vue 元件
 │       ├── composables/  # Composition API 工具
+│       ├── constants/    # 狀態標籤、轉換規則與分頁設定
 │       ├── mock/         # localStorage Mock server
 │       ├── router/       # Vue Router 設定
 │       ├── services/     # 業務服務層
 │       ├── stores/       # Pinia 狀態管理
 │       ├── types/        # TypeScript 型別
+│       ├── utils/        # 共用工具
 │       └── views/        # 路由頁面
 ├── docs/                 # 專案文件
 └── API.md                # API 規格
