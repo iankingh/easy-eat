@@ -1,2 +1,25 @@
 .DS_Store
 **/.DS_Store
+
+# Local environment files and credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Repository-root editor and temporary files
+/.idea/
+/.vscode/
+/.cache/
+/.tmp/
+/tmp/
+/*.log
+*.swp
+*.swo
+*~

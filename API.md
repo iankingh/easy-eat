@@ -101,7 +101,7 @@ interface MenuCategory {
 | `PUT`    | `/api/orders/{id}`        | `updateOrder(id, payload)`          | 更新 `draft` 或 `pending` 的內容與總額           |
 | `POST`   | `/api/orders/{id}/submit` | `submitOrder(id)`                   | 重新驗證內容並將草稿送出為 `pending`             |
 | `PATCH`  | `/api/orders/{id}/status` | `updateOrderStatus(id, { status })` | 依允許的狀態流程更新                             |
-| `DELETE` | `/api/orders/{id}`        | `deleteOrder(id)`                   | 刪除訂單                                         |
+| `DELETE` | `/api/orders/{id}`        | `deleteOrder(id)`                   | 刪除訂單；ID 不存在時不變更資料                  |
 | `GET`    | `/api/orders/statistics`  | `listMealStatistics()`              | 取得餐點數量與金額統計                           |
 
 新增與更新訂單使用 `CreateOrderInput`／`UpdateOrderInput`。餐點不可重複、數量須為大於 `0` 的整數，且至少須有一項餐點。統計包含 `pending` 與 `completed`，排除 `draft` 與 `cancelled`。
