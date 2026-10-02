@@ -111,7 +111,7 @@ export async function POST(request: Request) {
       if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(orderDate) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(deadline)) return Response.json({ error: "請填寫團名、日期與有效截止時間。" }, { status: 400 });
       if (orderDate < taipeiDate()) return Response.json({ error: "日期不能早於今天。" }, { status: 400 });
       const closesAt = `${orderDate}T${deadline}:00+08:00`;
-      if (Date.parse(closesAt) <= Date.now()) return Response.json({ error: "截止時間必須晚於現在。" }, { status: 400 });
+      if (!Number.isFinite(Date.parse(closesAt))) return Response.json({ error: "請填寫有效的日期與截止時間。" }, { status: 400 });
       const restaurantId = await ensureRestaurant(database, title);
       const reusable = await database.prepare("SELECT r.id FROM order_rounds r WHERE r.order_date = ? AND r.title = '尚未設定今日團購' AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.round_id = r.id) AND NOT EXISTS (SELECT 1 FROM menu_items m WHERE m.round_id = r.id) ORDER BY r.id DESC LIMIT 1").bind(orderDate).first<{ id: number }>();
       if (reusable) {

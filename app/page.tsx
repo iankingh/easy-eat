@@ -12,6 +12,15 @@ const money = (amount: number) => new Intl.NumberFormat("zh-TW", { style: "curre
 const restaurantChoices = ["藍色給力", "綠色給力", "八方"];
 const todayInTaipei = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(new Date());
 
+function newRoundDefaults() {
+  const closes = new Date(Date.now() + 60 * 60 * 1000);
+  return {
+    title: "",
+    orderDate: new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(closes),
+    deadline: new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Taipei", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(closes),
+  };
+}
+
 export default function Home() {
   const [data, setData] = useState<Data | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,7 +36,10 @@ export default function Home() {
   const [groupTitle, setGroupTitle] = useState("");
   const [deadline, setDeadline] = useState("10:30");
   const [selectedRoundId, setSelectedRoundId] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("round") || "");
-  const [newRound, setNewRound] = useState({ title: "", orderDate: todayInTaipei(), deadline: "10:30" });
+  const [newRound, setNewRound] = useState(newRoundDefaults);
+
+  const [creatingRound, setCreatingRound] = useState(false);
+  const [createError, setCreateError] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -97,12 +109,19 @@ export default function Home() {
 
   async function createRound(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (creatingRound) return;
+    setCreatingRound(true);
+    setCreateError("");
     try {
       const result = await mutate({ action: "create-round", ...newRound }) as { roundId: number };
-      setNewRound({ title: "", orderDate: todayInTaipei(), deadline: "10:30" });
+      setNewRound(newRoundDefaults());
       selectRound(result.roundId);
       setMessage("新團已建立；會直接使用這家店的共用菜單，售完狀態則重新開始設定。");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "建立團購失敗。"); }
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "建立團購失敗。";
+      setCreateError(text);
+      setMessage(text);
+    } finally { setCreatingRound(false); }
   }
 
   async function copyRoundLink(roundId: number) {
@@ -249,8 +268,10 @@ export default function Home() {
                   <label className="text-sm font-semibold">店家名稱<input required maxLength={100} value={newRound.title} onChange={e => setNewRound(value => ({ ...value, title: e.target.value }))} placeholder="例如：飲料店、健康餐、麵店" className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
                   <label className="text-sm font-semibold">團購日期<input required type="date" min={todayInTaipei()} value={newRound.orderDate} onChange={e => setNewRound(value => ({ ...value, orderDate: e.target.value }))} className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
                   <label className="text-sm font-semibold">截止時間<input required type="time" value={newRound.deadline} onChange={e => setNewRound(value => ({ ...value, deadline: e.target.value }))} className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
-                  <button className="h-12 rounded-xl bg-[#163d35] px-5 font-bold text-white">建立團購</button>
+                  <button type="submit" disabled={creatingRound} className="h-12 rounded-xl bg-[#163d35] px-5 font-bold text-white disabled:opacity-50">{creatingRound ? "建立中…" : "建立新訂單"}</button>
                 </form>
+                {createError && <p role="alert" className="mt-3 text-sm font-semibold text-red-700">{createError}</p>}
+                <p className="mt-3 text-sm text-[#65727e]">可先建立關閉中的訂單、準備菜單，再調整截止時間並開放點餐。</p>
               </section>
 
               <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
