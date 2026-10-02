@@ -8,6 +8,7 @@ type Order = { id: number; name: string; account: string; note: string; status: 
 type Data = { round: Round; menu: MenuItem[]; orders: Order[]; orderCount: number; orderTotal: number };
 
 const money = (amount: number) => new Intl.NumberFormat("zh-TW", { style: "currency", currency: "TWD", maximumFractionDigits: 0 }).format(amount);
+const restaurantChoices = ["藍色給力", "綠色給力", "八方"];
 
 export default function Home() {
   const [data, setData] = useState<Data | null>(null);
@@ -206,6 +207,13 @@ export default function Home() {
             <div className="space-y-5">
               <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
                 <div className="mb-4"><h2 className="text-lg font-bold">設定今日要開的團</h2><p className="mt-1 text-sm text-[#65727e]">先填店家或團購名稱與截止時間，再維護今日菜單。</p></div>
+                <div className="mb-4">
+                  <p className="mb-2 text-sm font-semibold">快速選店</p>
+                  <div className="flex flex-wrap gap-2">
+                    {restaurantChoices.map(restaurant => <button key={restaurant} type="button" aria-pressed={groupTitle === restaurant} onClick={() => setGroupTitle(restaurant)} className={`rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${groupTitle === restaurant ? "border-[#163d35] bg-[#163d35] text-white" : "border-[#d9e0e4] bg-white text-[#40505c] hover:bg-[#f4f6f8]"}`}>{restaurant}</button>)}
+                    <button type="button" onClick={() => setGroupTitle(restaurantChoices[Math.floor(Math.random() * restaurantChoices.length)])} className="rounded-xl border border-[#d9e0e4] bg-[#fff7ef] px-4 py-2.5 text-sm font-bold text-[#8f4f2d] hover:bg-[#fff0e2]">🎲 隨機選一家</button>
+                  </div>
+                </div>
                 <form onSubmit={saveRound} className="grid gap-4 sm:grid-cols-[1fr_170px_auto] sm:items-end">
                   <label className="text-sm font-semibold">團購名稱<input required maxLength={100} value={groupTitle} onChange={e => setGroupTitle(e.target.value)} placeholder="例如：小林海南雞飯" className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
                   <label className="text-sm font-semibold">截止時間<input required type="time" value={deadline} onChange={e => setDeadline(e.target.value)} className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
