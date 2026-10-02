@@ -180,11 +180,17 @@ export async function POST(request: Request) {
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(deadline)) return Response.json({ error: "截止時間不正確。請輸入 00:00～23:59 的時間。" }, { status: 400 });
       const roundId = Number(body.roundId);
       if (!Number.isInteger(roundId) || roundId < 1) return Response.json({ error: "找不到這張團購訂單。請重新整理頁面，再從「所有團次」選擇訂單。" }, { status: 400 });
-      const round = await database.prepare("SELECT title, restaurant_id AS restaurantId, order_date AS orderDate FROM order_rounds WHERE id = ?").bind(roundId).first<{ title: string; restaurantId: number | null; orderDate: string }>();
+      const round = await database.prepare("SELECT title, restaurant_id AS restaurantId, order_date AS orderDate, status FROM order_rounds WHERE id = ?").bind(roundId).first<{ title: string; restaurantId: number | null; orderDate: string; status: "open" | "closed" }>();
       if (!round) return Response.json({ error: "找不到這張團購訂單。請重新整理頁面，再從「所有團次」選擇訂單。" }, { status: 404 });
       const date = round.orderDate;
       const closesAt = `${date}T${deadline}:00+08:00`;
-      if (Date.parse(closesAt) <= Date.now()) return Response.json({ error: `截止時間 ${displayTime(closesAt)} 已過期。這團日期是 ${date}，請將時間調整至現在之後；若要改為其他日期，請建立新訂單。` }, { status: 400 });
+      const openAfterSave = body.openAfterSave === true;
+      if ((openAfterSave || round.status === "open") && Date.parse(closesAt) <= Date.now()) return Response.json({ error: `截止時間 ${displayTime(closesAt)} 已過期。這團日期是 ${date}，請將時間調整至現在之後；若要改為其他日期，請建立新訂單。` }, { status: 400 });
+      if (openAfterSave && round.title !== title) return Response.json({ error: "店家已修改但尚未儲存。請先按「儲存店家與時間」，確認新店家的餐點後，再開放點餐。" }, { status: 409 });
+      if (openAfterSave) {
+        const count = await database.prepare("SELECT COUNT(*) AS count FROM restaurant_menu_items m LEFT JOIN round_menu_availability a ON a.menu_item_id = m.id AND a.round_id = ? WHERE m.restaurant_id = ? AND m.active = 1 AND COALESCE(a.available, 1) = 1").bind(roundId, round.restaurantId).first<{ count: number }>();
+        if (!count?.count) return Response.json({ error: `「${round.title}」沒有供應中的餐點。請在「設定餐點」新增餐點，或將售完餐點改為供應中，再開放點餐。` }, { status: 409 });
+      }
       if (round.title !== title) {
         const orderCount = await database.prepare("SELECT COUNT(*) AS count FROM orders WHERE round_id = ?").bind(roundId).first<{ count: number }>();
         if (orderCount?.count) return Response.json({ error: "這團已有訂單，無法更換店家；請建立新團以保留訂單紀錄。" }, { status: 409 });
@@ -196,7 +202,7 @@ export async function POST(request: Request) {
         const restaurantId = await ensureRestaurant(database, title);
         await database.prepare("UPDATE order_rounds SET restaurant_id = ?, closes_at = ? WHERE id = ?").bind(restaurantId, closesAt, roundId).run();
       } else {
-        await database.prepare("UPDATE order_rounds SET title = ?, closes_at = ? WHERE id = ?").bind(title, closesAt, roundId).run();
+        await database.prepare("UPDATE order_rounds SET title = ?, closes_at = ?, status = CASE WHEN ? = 1 THEN 'open' ELSE status END WHERE id = ?").bind(title, closesAt, openAfterSave ? 1 : 0, roundId).run();
       }
       return Response.json({ ok: true });
     }
@@ -239,7 +245,7 @@ export async function POST(request: Request) {
       const roundId = Number(body.roundId);
       const currentRound = Number.isInteger(roundId) ? await database.prepare("SELECT id, status, closes_at AS closesAt FROM order_rounds WHERE id = ?").bind(roundId).first<{ id: number; status: "open" | "closed"; closesAt: string }>() : null;
       if (!currentRound) return Response.json({ error: "找不到這張團購訂單。請重新整理頁面，再從「所有團次」選擇訂單。" }, { status: 404 });
-      if (Date.now() >= Date.parse(currentRound.closesAt)) return Response.json({ error: `這團的截止時間為 ${displayTime(currentRound.closesAt)}，目前已過期。請先在「設定所選團次」調整截止時間，再開放點餐。` }, { status: 409 });
+      if (Date.now() >= Date.parse(currentRound.closesAt)) return Response.json({ error: `這團的截止時間為 ${displayTime(currentRound.closesAt)}，目前已過期。請先在「設定店家與截止時間」調整截止時間，再開放點餐。` }, { status: 409 });
       if (currentRound.status === "closed") {
         const count = await database.prepare("SELECT COUNT(*) AS count FROM order_rounds r JOIN restaurant_menu_items m ON m.restaurant_id = r.restaurant_id AND m.active = 1 LEFT JOIN round_menu_availability a ON a.round_id = r.id AND a.menu_item_id = m.id WHERE r.id = ? AND COALESCE(a.available, 1) = 1").bind(currentRound.id).first<{ count: number }>();
         if (!count?.count) return Response.json({ error: "請先新增至少一項供應中的餐點，再開放同事點餐。" }, { status: 409 });

@@ -35,6 +35,8 @@ export default function Home() {
   const busyRef = useRef(false);
   const refreshIssueRef = useRef("");
   const feedbackButtonRef = useRef<HTMLButtonElement>(null);
+  const managementRef = useRef<HTMLDivElement>(null);
+  const createDetailsRef = useRef<HTMLDetailsElement>(null);
   const [busyLabel, setBusyLabel] = useState("");
   const [message, setMessageValue] = useState("");
   const [messageIsError, setMessageIsError] = useState(false);
@@ -104,7 +106,7 @@ export default function Home() {
       "toggle-round": "正在更新團購開放狀態…", "toggle-order": "正在更新訂單確認狀態…",
       "toggle-menu-item": "正在更新餐點供應狀態…", "remove-menu-item": "正在移除店家餐點…",
     };
-    return runBusy(labels[String(body.action)] || "正在儲存…", async () => {
+    return runBusy(body.openAfterSave === true ? "正在儲存截止時間並開放點餐…" : labels[String(body.action)] || "正在儲存…", async () => {
     let response: Response;
     try {
       response = await fetch("/api/ordering", { method: "POST", headers: { "content-type": "application/json", ...(body.action === "place-order" ? {} : { "x-admin-code": adminCode }) }, body: JSON.stringify(body), signal: AbortSignal.timeout(20000) });
@@ -134,6 +136,7 @@ export default function Home() {
   async function addMenuItem(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
+      if (groupTitle.trim() !== data?.round.title) throw new Error("店家已修改但尚未儲存。請先按「儲存店家與時間」，再設定新店家的菜單。");
       await mutate({ action: "add-menu-item", roundId: data?.round.id, ...newItem, price: Number(newItem.price) });
       setNewItem({ name: "", description: "", price: "" });
       setMessage("餐點已加入菜單。");
@@ -146,9 +149,19 @@ export default function Home() {
     catch (error) { showError(error instanceof Error ? error.message : "設定儲存失敗。"); }
   }
 
+  async function openRound() {
+    try {
+      await mutate({ action: "update-round", roundId: data?.round.id, title: groupTitle, deadline, openAfterSave: true });
+      setMessage(`「${data?.round.title}」已開放點餐，截止時間已儲存為 ${deadline}。可以複製連結給同事。`);
+    } catch (error) { showError(error instanceof Error ? error.message : "開放點餐失敗，請確認截止時間與菜單。"); }
+  }
+
   function selectRound(roundId: number | string) {
     const id = String(roundId);
     setSelectedRoundId(id);
+    setQuantities({});
+    setNewItem({ name: "", description: "", price: "" });
+    managementRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     const url = new URL(window.location.href);
     url.searchParams.set("round", id);
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
@@ -163,6 +176,7 @@ export default function Home() {
       const result = await mutate({ action: "create-round", ...newRound }) as { roundId: number };
       setNewRound(newRoundDefaults());
       selectRound(result.roundId);
+      if (createDetailsRef.current) createDetailsRef.current.open = false;
       setMessage("新團已建立；會直接使用這家店的共用菜單，售完狀態則重新開始設定。");
     } catch (error) {
       const text = error instanceof Error ? error.message : "建立團購失敗。";
@@ -319,8 +333,12 @@ export default function Home() {
             </form>
           ) : (
             <div className="space-y-5">
-              <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
-                <div className="mb-4"><h2 className="text-lg font-bold">建立新團</h2><p className="mt-1 text-sm text-[#65727e]">每一團的訂單與連結各自分開；同一家店共用同一份菜單。建立後先關閉，準備好再開放。</p></div>
+              <div ref={managementRef} className="scroll-mt-5 rounded-2xl border border-[#e1e6eb] bg-white p-5">
+                <label className="text-sm font-bold">切換管理的訂單<select value={data.round.id} onChange={event => selectRound(event.target.value)} className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] bg-white px-3 text-base font-normal">{data.rounds.map(round => <option key={round.id} value={round.id}>{round.orderDate} · {round.title} · {round.status === "open" ? "開放中" : "已關閉"}</option>)}</select></label>
+              </div>
+
+              <details ref={createDetailsRef} className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
+                <summary className="cursor-pointer text-base font-bold text-[#163d35]">＋ 建立新訂單</summary><div className="mb-4 mt-4"><p className="mt-1 text-sm text-[#65727e]">每一團的訂單與連結各自分開；同一家店共用同一份菜單。建立後先關閉，準備好再開放。</p></div>
                 <div className="mb-4"><p className="mb-2 text-sm font-semibold">快速選店</p><div className="flex flex-wrap gap-2">
                   {restaurantChoices.map(restaurant => <button key={restaurant} type="button" aria-pressed={newRound.title === restaurant} onClick={() => setNewRound(value => ({ ...value, title: restaurant }))} className={`rounded-xl border px-4 py-2.5 text-sm font-semibold ${newRound.title === restaurant ? "border-[#163d35] bg-[#163d35] text-white" : "border-[#d9e0e4] text-[#40505c] hover:bg-[#f4f6f8]"}`}>{restaurant}</button>)}
                   <button type="button" onClick={() => setNewRound(value => ({ ...value, title: restaurantChoices[Math.floor(Math.random() * restaurantChoices.length)] }))} className="rounded-xl border border-[#d9e0e4] bg-[#fff7ef] px-4 py-2.5 text-sm font-bold text-[#8f4f2d] hover:bg-[#fff0e2]">🎲 隨機選一家</button>
@@ -333,15 +351,15 @@ export default function Home() {
                 </form>
                 {createError && <p role="alert" className="mt-3 text-sm font-semibold text-red-700">{createError}</p>}
                 <p className="mt-3 text-sm text-[#65727e]">可先建立關閉中的訂單、準備菜單，再調整截止時間並開放點餐。</p>
-              </section>
+              </details>
 
               <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
-                <div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-lg font-bold">所有團次</h2><p className="mt-1 text-sm text-[#65727e]">選擇團次查看訂單，或複製該團的點餐連結。</p></div><span className="rounded-full bg-[#f1f4f5] px-3 py-1 text-sm font-semibold">{data.rounds.length} 團</span></div>
-                {data.rounds.length === 0 ? <p className="rounded-xl bg-[#f5f7f8] p-4 text-sm text-[#65727e]">目前沒有團次。</p> : <div className="space-y-2">{data.rounds.map(round => <article key={round.id} className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 ${String(round.id) === selectedRoundId ? "border-[#7a9a8f] bg-[#f2f7f4]" : "border-[#e7ecef]"}`}><div className="min-w-[180px] flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-bold">{round.title}</p><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${round.status === "open" ? "bg-[#e8f4ed] text-[#286148]" : "bg-[#f1f4f5] text-[#65727e]"}`}>{round.status === "open" ? "開放中" : "已關閉"}</span></div><p className="mt-1 text-sm text-[#65727e]">{round.orderDate}　·　{round.orderCount} 人　·　{money(round.orderTotal)}</p></div><div className="flex flex-wrap gap-2">{round.status === "open" && <button onClick={() => void runAdmin("toggle-round", { roundId: round.id })} className="rounded-lg border border-[#d9e0e4] px-3 py-2 text-sm font-semibold text-[#934c29]">關閉訂單</button>}<button onClick={() => selectRound(round.id)} className="rounded-lg border border-[#d9e0e4] px-3 py-2 text-sm font-semibold">管理這團</button><button onClick={() => void copyRoundLink(round.id)} className="rounded-lg bg-[#163d35] px-3 py-2 text-sm font-semibold text-white">複製點餐連結 🔗</button></div></article>)}</div>}
-              </section>
-
-              <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
-                <div className="mb-4"><h2 className="text-lg font-bold">設定所選團次</h2><p className="mt-1 text-sm text-[#65727e]">每個店家有自己的共用菜單；新增或移除餐點會套用到同店團次，售完狀態只影響本團。有訂單後不能更換店家。</p></div>
+                <div className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-[#e1e6eb] pb-5">
+                  <div><p className="text-sm font-semibold text-[#65727e]">正在管理 · {data.round.orderDate}</p><h2 className="mt-1 text-2xl font-bold">{data.round.title}</h2><p className="mt-2 text-sm font-semibold">{data.round.status === "open" ? "● 開放點餐中" : "● 尚未開放／已關閉"}</p></div>
+                  <div className="flex flex-wrap gap-2"><button type="button" onClick={() => void copyRoundLink(data.round.id)} className="rounded-xl border border-[#d9e0e4] px-4 py-3 text-sm font-bold">複製點餐連結 🔗</button><button type="button" onClick={() => data.round.status === "open" ? void runAdmin("toggle-round") : void openRound()} className={`rounded-xl px-5 py-3 font-bold ${data.round.status === "open" ? "bg-[#fff0e6] text-[#934c29]" : "bg-[#163d35] text-white"}`}>{data.round.status === "open" ? "關閉點餐" : "儲存時間並開放點餐"}</button></div>
+                </div>
+                <p className="mb-5 rounded-xl bg-[#f2f7f4] p-3 text-sm text-[#40505c]">設定店家 → 確認下方菜單 → 開放點餐。開放按鈕會一併儲存截止時間。</p>
+                <div className="mb-4"><h2 className="text-lg font-bold">1. 設定店家與截止時間</h2><p className="mt-1 text-sm text-[#65727e]">每個店家有自己的共用菜單；新增或移除餐點會套用到同店團次，售完狀態只影響本團。有訂單後不能更換店家。</p></div>
                 <div className="mb-4">
                   <p className="mb-2 text-sm font-semibold">快速選店</p>
                   <div className="flex flex-wrap gap-2">
@@ -352,18 +370,20 @@ export default function Home() {
                 <form noValidate onSubmit={saveRound} className="grid gap-4 sm:grid-cols-[1fr_170px_auto] sm:items-end">
                   <label className="text-sm font-semibold">店家名稱<input required maxLength={100} value={groupTitle} onChange={e => setGroupTitle(e.target.value)} placeholder="例如：飲料店、健康餐、麵店" className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
                   <label className="text-sm font-semibold">截止時間<input required type="time" value={deadline} onChange={e => setDeadline(e.target.value)} className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
-                  <button className="h-12 rounded-xl bg-[#163d35] px-5 font-bold text-white">儲存團購設定</button>
+                  <button className="h-12 rounded-xl bg-[#163d35] px-5 font-bold text-white">儲存店家與時間</button>
                 </form>
               </section>
-              <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
-                <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-semibold text-[#65727e]">{data.round.title}</p><h2 className="mt-1 text-2xl font-bold">{totalOrders} 筆訂單 <span className="text-[#a65c36]">· {money(orderTotal)}</span></h2><p className="mt-1 text-sm text-[#65727e]">目前{data.round.status === "open" ? "開放中" : "已截止"}，截止時間 {new Date(data.round.closesAt).toLocaleString("zh-TW", { hour: "2-digit", minute: "2-digit" })}</p></div><button onClick={() => void runAdmin("toggle-round")} className={`rounded-xl px-4 py-2.5 text-sm font-bold ${data.round.status === "open" ? "bg-[#fff0e6] text-[#934c29]" : "bg-[#e8f4ed] text-[#286148]"}`}>{data.round.status === "open" ? "結束本次團購" : "重新開放點餐"}</button></div>
-              </section>
 
-              <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6"><div className="mb-4 flex items-center justify-between"><h2 className="text-lg font-bold">訂單明細</h2><button onClick={() => window.print()} className="rounded-lg border border-[#d9e0e4] px-3 py-2 text-sm font-semibold">列印／另存</button></div>
+              <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6"><h2 className="text-lg font-bold">2. 設定「{data.round.title}」的餐點</h2><p className="mt-1 text-sm text-[#65727e]">餐點會保存在店家菜單中；標記售完只影響這一團。</p><form noValidate onSubmit={addMenuItem} className="mt-4 grid gap-3 sm:grid-cols-[1fr_1.2fr_110px_auto]"><input required maxLength={80} value={newItem.name} onChange={e => setNewItem(v => ({ ...v, name: e.target.value }))} placeholder="餐點名稱" className="h-11 rounded-lg border border-[#d9e0e4] px-3 text-base"/><input maxLength={160} value={newItem.description} onChange={e => setNewItem(v => ({ ...v, description: e.target.value }))} placeholder="簡短說明" className="h-11 rounded-lg border border-[#d9e0e4] px-3 text-base"/><input required min="1" type="number" value={newItem.price} onChange={e => setNewItem(v => ({ ...v, price: e.target.value }))} placeholder="價格" className="h-11 rounded-lg border border-[#d9e0e4] px-3 text-base"/><button className="h-11 rounded-lg bg-[#163d35] px-4 font-bold text-white">新增餐點</button></form><div className="mt-4 divide-y divide-[#edf0f2]">{data.menu.map(item => <div key={item.id} className="flex items-center justify-between gap-4 py-3"><div><span className="font-semibold">{item.name}</span><span className="ml-3 text-sm text-[#65727e]">{money(item.price)}</span></div><div className="flex items-center gap-2"><button onClick={() => void runAdmin("toggle-menu-item", { menuItemId: item.id })} className={`rounded-full px-3 py-1.5 text-sm font-semibold ${item.available ? "bg-[#e8f4ed] text-[#286148]" : "bg-[#f1f4f5] text-[#65727e]"}`}>{item.available ? "供應中" : "售完"}</button><button onClick={() => { if (window.confirm(`確定從「${data.round.title}」店家菜單移除「${item.name}」？同店團次都會更新。`)) void runAdmin("remove-menu-item", { menuItemId: item.id }); }} className="rounded-full px-3 py-1.5 text-sm font-semibold text-[#8a514a] hover:bg-[#fff1ef]">移除</button></div></div>)}</div>{data.menu.length === 0 && <p className="mt-4 text-sm text-[#65727e]">這家店還沒有菜單，請在這裡新增餐點，完成後按上方「儲存時間並開放點餐」。</p>}</section>
+
+              <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6"><div className="mb-4 flex items-center justify-between"><div><h2 className="text-lg font-bold">訂單明細</h2><p className="mt-1 text-sm text-[#65727e]">{totalOrders} 筆訂單 · {money(orderTotal)}</p></div><button onClick={() => window.print()} className="rounded-lg border border-[#d9e0e4] px-3 py-2 text-sm font-semibold">列印／另存</button></div>
                 {data.orders.length === 0 ? <p className="rounded-xl bg-[#f5f7f8] p-5 text-base text-[#65727e]">還沒有同事送出訂單。</p> : <div className="space-y-3">{data.orders.map(order => <article key={order.id} className="rounded-xl border border-[#e7ecef] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-bold">{order.name}<span className="ml-2 text-sm font-medium text-[#65727e]">{order.account}</span></p><p className="mt-1 text-sm text-[#65727e]">{order.items.map(item => `${item.name} × ${item.quantity}`).join("、")}{order.note ? `　｜　${order.note}` : ""}</p></div><div className="flex items-center gap-3"><strong>{money(order.total)}</strong><button onClick={() => void runAdmin("toggle-order", { orderId: order.id })} className={`rounded-full px-3 py-1.5 text-sm font-semibold ${order.status === "received" ? "bg-[#e8f4ed] text-[#286148]" : "bg-[#f1f4f5] text-[#576672]"}`}>{order.status === "received" ? "已確認" : "未確認"}</button></div></div></article>)}</div>}
               </section>
 
-              <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6"><h2 className="text-lg font-bold">管理「{data.round.title}」的店家菜單</h2><p className="mt-1 text-sm text-[#65727e]">餐點會保存在店家菜單中；標記售完只影響這一團。</p><form noValidate onSubmit={addMenuItem} className="mt-4 grid gap-3 sm:grid-cols-[1fr_1.2fr_110px_auto]"><input required maxLength={80} value={newItem.name} onChange={e => setNewItem(v => ({ ...v, name: e.target.value }))} placeholder="餐點名稱" className="h-11 rounded-lg border border-[#d9e0e4] px-3 text-base"/><input maxLength={160} value={newItem.description} onChange={e => setNewItem(v => ({ ...v, description: e.target.value }))} placeholder="簡短說明" className="h-11 rounded-lg border border-[#d9e0e4] px-3 text-base"/><input required min="1" type="number" value={newItem.price} onChange={e => setNewItem(v => ({ ...v, price: e.target.value }))} placeholder="價格" className="h-11 rounded-lg border border-[#d9e0e4] px-3 text-base"/><button className="h-11 rounded-lg bg-[#163d35] px-4 font-bold text-white">新增餐點</button></form><div className="mt-4 divide-y divide-[#edf0f2]">{data.menu.map(item => <div key={item.id} className="flex items-center justify-between gap-4 py-3"><div><span className="font-semibold">{item.name}</span><span className="ml-3 text-sm text-[#65727e]">{money(item.price)}</span></div><div className="flex items-center gap-2"><button onClick={() => void runAdmin("toggle-menu-item", { menuItemId: item.id })} className={`rounded-full px-3 py-1.5 text-sm font-semibold ${item.available ? "bg-[#e8f4ed] text-[#286148]" : "bg-[#f1f4f5] text-[#65727e]"}`}>{item.available ? "供應中" : "售完"}</button><button onClick={() => { if (window.confirm(`確定從「${data.round.title}」店家菜單移除「${item.name}」？同店團次都會更新。`)) void runAdmin("remove-menu-item", { menuItemId: item.id }); }} className="rounded-full px-3 py-1.5 text-sm font-semibold text-[#8a514a] hover:bg-[#fff1ef]">移除</button></div></div>)}</div>{data.menu.length === 0 && <p className="mt-4 text-sm text-[#65727e]">這家店還沒有菜單，請先新增餐點，再開放同事點餐。</p>}</section>
+              <details className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
+                <summary className="cursor-pointer font-bold">查看所有團購訂單與連結</summary><div className="mb-4 mt-4 flex items-center justify-between gap-3"><div><h2 className="text-lg font-bold">所有團次</h2><p className="mt-1 text-sm text-[#65727e]">選擇團次查看訂單，或複製該團的點餐連結。</p></div><span className="rounded-full bg-[#f1f4f5] px-3 py-1 text-sm font-semibold">{data.rounds.length} 團</span></div>
+                {data.rounds.length === 0 ? <p className="rounded-xl bg-[#f5f7f8] p-4 text-sm text-[#65727e]">目前沒有團次。</p> : <div className="space-y-2">{data.rounds.map(round => <article key={round.id} className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 ${String(round.id) === selectedRoundId ? "border-[#7a9a8f] bg-[#f2f7f4]" : "border-[#e7ecef]"}`}><div className="min-w-[180px] flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-bold">{round.title}</p><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${round.status === "open" ? "bg-[#e8f4ed] text-[#286148]" : "bg-[#f1f4f5] text-[#65727e]"}`}>{round.status === "open" ? "開放中" : "已關閉"}</span></div><p className="mt-1 text-sm text-[#65727e]">{round.orderDate}　·　{round.orderCount} 人　·　{money(round.orderTotal)}</p></div><div className="flex flex-wrap gap-2">{round.status === "open" && <button onClick={() => void runAdmin("toggle-round", { roundId: round.id })} className="rounded-lg border border-[#d9e0e4] px-3 py-2 text-sm font-semibold text-[#934c29]">關閉訂單</button>}<button onClick={() => selectRound(round.id)} className="rounded-lg border border-[#d9e0e4] px-3 py-2 text-sm font-semibold">管理這團</button><button onClick={() => void copyRoundLink(round.id)} className="rounded-lg bg-[#163d35] px-3 py-2 text-sm font-semibold text-white">複製點餐連結 🔗</button></div></article>)}</div>}
+              </details>
             </div>
           ))}
         </section>
