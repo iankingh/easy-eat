@@ -1,0 +1,62 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "../vendor/shadcn-tailwind-4.13.0.css";
+
+:root {
+  --background: #f4f6f8;
+  --foreground: #18202b;
+  --card: #ffffff;
+  --card-foreground: #18202b;
+  --popover: #ffffff;
+  --popover-foreground: #18202b;
+  --primary: #163d35;
+  --primary-foreground: #ffffff;
+  --secondary: #e8efec;
+  --secondary-foreground: #254b41;
+  --muted: #edf0f2;
+  --muted-foreground: #65727e;
+  --accent: #a65c36;
+  --accent-foreground: #ffffff;
+  --destructive: #b53c35;
+  --border: #e1e6eb;
+  --input: #d9e0e4;
+  --ring: #568174;
+  --radius: 0.85rem;
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: Arial, "Noto Sans TC", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--background); color: var(--foreground); font-family: Arial, "Noto Sans TC", sans-serif; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid #78a398; outline-offset: 2px; }
+@media print {
+  header, aside, nav, button, form > .sticky { display: none !important; }
+  body, main { background: white !important; }
+}
