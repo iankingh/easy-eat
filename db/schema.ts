@@ -12,11 +12,12 @@ export const orderRounds = sqliteTable("order_rounds", {
 
 export const menuItems = sqliteTable("menu_items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  roundId: integer("round_id").references(() => orderRounds.id),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   price: integer("price").notNull(),
   available: integer("available", { mode: "boolean" }).notNull().default(true),
-});
+}, (table) => [index("idx_menu_items_round_id").on(table.roundId)]);
 
 export const orders = sqliteTable("orders", {
   id: text("id").primaryKey(),

@@ -21,6 +21,8 @@ export default function Home() {
   const [account, setAccount] = useState("");
   const [note, setNote] = useState("");
   const [newItem, setNewItem] = useState({ name: "", description: "", price: "" });
+  const [groupTitle, setGroupTitle] = useState("");
+  const [deadline, setDeadline] = useState("10:30");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -36,6 +38,11 @@ export default function Home() {
   }, [adminCode, adminReady, tab]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (!data) return;
+    setGroupTitle(data.round.title);
+    setDeadline(data.round.closesAt.slice(11, 16));
+  }, [data?.round.id, data?.round.title, data?.round.closesAt]);
 
   const selectedTotal = useMemo(() => data?.menu.reduce((sum, item) => sum + item.price * (quantities[item.id] ?? 0), 0) ?? 0, [data, quantities]);
   const selectedCount = useMemo(() => Object.values(quantities).reduce((sum, qty) => sum + qty, 0), [quantities]);
@@ -66,6 +73,12 @@ export default function Home() {
       setNewItem({ name: "", description: "", price: "" });
       setMessage("餐點已加入菜單。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "新增失敗。"); }
+  }
+
+  async function saveRound(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try { await mutate({ action: "update-round", title: groupTitle, deadline }); setMessage("今日團購設定已儲存。"); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "設定儲存失敗。"); }
   }
 
   async function verifyAdmin(event: React.FormEvent<HTMLFormElement>) {
@@ -187,6 +200,14 @@ export default function Home() {
             </form>
           ) : (
             <div className="space-y-5">
+              <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
+                <div className="mb-4"><h2 className="text-lg font-bold">設定今日要開的團</h2><p className="mt-1 text-sm text-[#65727e]">先填店家或團購名稱與截止時間，再維護今日菜單。</p></div>
+                <form onSubmit={saveRound} className="grid gap-4 sm:grid-cols-[1fr_170px_auto] sm:items-end">
+                  <label className="text-sm font-semibold">團購名稱<input required maxLength={100} value={groupTitle} onChange={e => setGroupTitle(e.target.value)} placeholder="例如：小林海南雞飯" className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
+                  <label className="text-sm font-semibold">截止時間<input required type="time" value={deadline} onChange={e => setDeadline(e.target.value)} className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
+                  <button className="h-12 rounded-xl bg-[#163d35] px-5 font-bold text-white">儲存團購設定</button>
+                </form>
+              </section>
               <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
                 <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-sm font-semibold text-[#65727e]">{data.round.title}</p><h2 className="mt-1 text-2xl font-bold">{totalOrders} 筆訂單 <span className="text-[#a65c36]">· {money(orderTotal)}</span></h2><p className="mt-1 text-sm text-[#65727e]">目前{data.round.status === "open" ? "開放中" : "已截止"}，截止時間 {new Date(data.round.closesAt).toLocaleString("zh-TW", { hour: "2-digit", minute: "2-digit" })}</p></div><button onClick={() => void runAdmin("toggle-round")} className={`rounded-xl px-4 py-2.5 text-sm font-bold ${data.round.status === "open" ? "bg-[#fff0e6] text-[#934c29]" : "bg-[#e8f4ed] text-[#286148]"}`}>{data.round.status === "open" ? "結束本次團購" : "重新開放點餐"}</button></div>
               </section>
