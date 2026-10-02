@@ -47,7 +47,7 @@ async function getSnapshot(database: D1Database, includeOrders: boolean) {
     round.status = "closed";
   }
   const menu = await database.prepare("SELECT id, name, description, price, available FROM menu_items ORDER BY id").all<MenuRow>();
-  const summary = await database.prepare("SELECT COUNT(*) AS count, COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS total FROM orders o LEFT JOIN order_items oi ON oi.order_id = o.id WHERE o.round_id = ?").bind(round.id).first<{ count: number; total: number }>();
+  const summary = await database.prepare("SELECT COUNT(DISTINCT o.account) AS count, COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS total FROM orders o LEFT JOIN order_items oi ON oi.order_id = o.id WHERE o.round_id = ?").bind(round.id).first<{ count: number; total: number }>();
   let orders: unknown[] = [];
   if (includeOrders) {
     const rows = await database.prepare("SELECT o.id, o.employee_name AS name, o.account, o.note, o.status, i.name AS itemName, oi.quantity, oi.unit_price AS price FROM orders o LEFT JOIN order_items oi ON oi.order_id = o.id LEFT JOIN menu_items i ON i.id = oi.menu_item_id WHERE o.round_id = ? ORDER BY o.created_at DESC, o.id").bind(round.id).all<{ id: string; name: string; account: string; note: string; status: "new" | "received"; itemName: string | null; quantity: number | null; price: number | null }>();
