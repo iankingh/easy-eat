@@ -26,13 +26,18 @@ function isAdmin(request: Request) {
 async function ensureStarterData(database: D1Database) {
   const now = taipeiNow();
   const date = taipeiDate();
-  let round = await database.prepare("SELECT id FROM order_rounds WHERE order_date = ? ORDER BY id DESC LIMIT 1").bind(date).first<{ id: number }>();
+  let round = await database.prepare("SELECT id, title, status FROM order_rounds WHERE order_date = ? ORDER BY id DESC LIMIT 1").bind(date).first<{ id: number; title: string; status: "open" | "closed" }>();
   if (!round) {
     const previous = await database.prepare("SELECT id FROM order_rounds ORDER BY id DESC LIMIT 1").first<{ id: number }>();
     if (previous) await database.prepare("UPDATE menu_items SET round_id = ? WHERE round_id IS NULL").bind(previous.id).run();
     const close = `${date}T10:30:00+08:00`;
     await database.prepare("INSERT INTO order_rounds (title, order_date, closes_at, status) SELECT '尚未設定今日團購', ?, ?, 'closed' WHERE NOT EXISTS (SELECT 1 FROM order_rounds WHERE order_date = ?)").bind(date, close, date).run();
-    round = await database.prepare("SELECT id FROM order_rounds WHERE order_date = ? ORDER BY id DESC LIMIT 1").bind(date).first<{ id: number }>();
+    round = await database.prepare("SELECT id, title, status FROM order_rounds WHERE order_date = ? ORDER BY id DESC LIMIT 1").bind(date).first<{ id: number; title: string; status: "open" | "closed" }>();
+  } else {
+    const defaultTitle = `${now.getMonth() + 1}/${now.getDate()} 午餐團購`;
+    if (round.title === defaultTitle && round.status === "open") {
+      await database.prepare("UPDATE order_rounds SET title = '尚未設定今日團購', status = 'closed' WHERE id = ?").bind(round.id).run();
+    }
   }
   if (round) await database.prepare("UPDATE menu_items SET round_id = ? WHERE round_id IS NULL").bind(round.id).run();
 }
@@ -129,6 +134,18 @@ export async function POST(request: Request) {
       const round = await database.prepare("SELECT id FROM order_rounds WHERE order_date = ? ORDER BY id DESC LIMIT 1").bind(taipeiDate()).first<{ id: number }>();
       if (!round) return Response.json({ error: "今日團購尚未建立。" }, { status: 409 });
       await database.prepare("UPDATE menu_items SET available = CASE available WHEN 1 THEN 0 ELSE 1 END WHERE id = ? AND round_id = ?").bind(Number(body.menuItemId), round.id).run();
+      return Response.json({ ok: true });
+    }
+    if (action === "remove-menu-item") {
+      await ensureStarterData(database);
+      const round = await database.prepare("SELECT id FROM order_rounds WHERE order_date = ? ORDER BY id DESC LIMIT 1").bind(taipeiDate()).first<{ id: number }>();
+      if (!round) return Response.json({ error: "今日團購尚未建立。" }, { status: 409 });
+      const itemId = Number(body.menuItemId);
+      const item = await database.prepare("SELECT id FROM menu_items WHERE id = ? AND round_id = ?").bind(itemId, round.id).first<{ id: number }>();
+      if (!item) return Response.json({ error: "找不到這項餐點。" }, { status: 404 });
+      const ordered = await database.prepare("SELECT COUNT(*) AS count FROM order_items WHERE menu_item_id = ?").bind(itemId).first<{ count: number }>();
+      if (ordered?.count) return Response.json({ error: "這項餐點已有訂單，請改為標記售完以保留訂單紀錄。" }, { status: 409 });
+      await database.prepare("DELETE FROM menu_items WHERE id = ? AND round_id = ?").bind(itemId, round.id).run();
       return Response.json({ ok: true });
     }
     if (action === "toggle-round") {
