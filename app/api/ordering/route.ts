@@ -19,6 +19,10 @@ function taipeiDate() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
+function displayTime(value: string) {
+  return new Intl.DateTimeFormat("zh-TW", { timeZone: "Asia/Taipei", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(value));
+}
+
 function isAdmin(request: Request) {
   const secret = env.LUNCH_ADMIN_CODE;
   return Boolean(secret && request.headers.get("x-admin-code") === secret);
@@ -89,7 +93,12 @@ async function getSnapshot(database: D1Database, request: Request, includeOrders
 
 export async function GET(request: Request) {
   try { return await getSnapshot(db(), request, isAdmin(request)); }
-  catch (error) { return Response.json({ error: error instanceof Error ? error.message : "資料讀取失敗。" }, { status: 503 }); }
+  catch (error) {
+    if (error instanceof Error && ["團購連結不正確。", "找不到這個團購，請確認點餐連結。", "資料庫目前無法使用，請稍後再試。"].includes(error.message)) return Response.json({ error: error.message }, { status: 503 });
+    const errorId = crypto.randomUUID().slice(0, 8);
+    console.error("ordering-read", errorId, error);
+    return Response.json({ error: `無法載入點餐資料。請重新整理後再試；若持續失敗，請提供錯誤編號 ${errorId} 給系統管理者。`, errorId }, { status: 503 });
+  }
 }
 
 export async function POST(request: Request) {
@@ -102,14 +111,17 @@ export async function POST(request: Request) {
       if (!isAdmin(request)) return Response.json({ error: "管理碼不正確。" }, { status: 401 });
       return Response.json({ ok: true });
     }
-    if (action !== "place-order" && !isAdmin(request)) return Response.json({ error: "請先登入管理後台。" }, { status: 401 });
+    if (action !== "place-order" && !isAdmin(request)) return Response.json({ error: "管理驗證未通過。請重新輸入管理碼並登入後台，再執行此操作。" }, { status: 401 });
 
     if (action === "create-round") {
       const title = typeof body.title === "string" ? body.title.trim().slice(0, 100) : "";
       const orderDate = typeof body.orderDate === "string" ? body.orderDate : "";
       const deadline = typeof body.deadline === "string" ? body.deadline : "";
-      if (!title || !/^\d{4}-\d{2}-\d{2}$/.test(orderDate) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(deadline)) return Response.json({ error: "請填寫團名、日期與有效截止時間。" }, { status: 400 });
-      if (orderDate < taipeiDate()) return Response.json({ error: "日期不能早於今天。" }, { status: 400 });
+      if (!title) return Response.json({ error: "店家名稱尚未填寫。請選擇一家店，或輸入店家名稱。", field: "title" }, { status: 400 });
+      const parsedDate = new Date(`${orderDate}T00:00:00Z`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(orderDate) || !Number.isFinite(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== orderDate) return Response.json({ error: "團購日期不正確。請使用日期欄位選擇有效日期。", field: "orderDate" }, { status: 400 });
+      if (orderDate < taipeiDate()) return Response.json({ error: `團購日期 ${orderDate} 已過期。請選擇今天（${taipeiDate()}）或之後的日期。`, field: "orderDate" }, { status: 400 });
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(deadline)) return Response.json({ error: "截止時間不正確。請輸入 00:00～23:59 的時間，例如 13:30。", field: "deadline" }, { status: 400 });
       const closesAt = `${orderDate}T${deadline}:00+08:00`;
       if (!Number.isFinite(Date.parse(closesAt))) return Response.json({ error: "請填寫有效的日期與截止時間。" }, { status: 400 });
       const restaurantId = await ensureRestaurant(database, title);
@@ -128,17 +140,24 @@ export async function POST(request: Request) {
       const account = typeof body.account === "string" ? body.account.trim().slice(0, 80) : "";
       const note = typeof body.note === "string" ? body.note.trim().slice(0, 160) : "";
       const items = Array.isArray(body.items) ? body.items as { menuItemId?: unknown; quantity?: unknown }[] : [];
-      if (!name || !account || !items.length || items.length > 30) return Response.json({ error: "請填寫姓名、帳號並選擇餐點。" }, { status: 400 });
+      if (!name) return Response.json({ error: "姓名尚未填寫。請輸入姓名後再送出訂單。" }, { status: 400 });
+      if (!account) return Response.json({ error: "帳號尚未填寫。請輸入帳號後再送出訂單。" }, { status: 400 });
+      if (!items.length) return Response.json({ error: "尚未選擇餐點。請將至少一項餐點的數量設為 1 以上。" }, { status: 400 });
+      if (items.length > 30) return Response.json({ error: "一張訂單最多可選擇 30 種餐點。請減少餐點種類後再送出。" }, { status: 400 });
       const roundId = Number(body.roundId);
       if (!Number.isInteger(roundId) || roundId < 1) return Response.json({ error: "點餐連結不正確。" }, { status: 400 });
       const round = await database.prepare("SELECT id, restaurant_id AS restaurantId, status, closes_at AS closesAt FROM order_rounds WHERE id = ?").bind(roundId).first<{ id: number; restaurantId: number | null; status: "open" | "closed"; closesAt: string }>();
-      if (!round || round.status !== "open" || Date.now() >= Date.parse(round.closesAt) || round.restaurantId === null) return Response.json({ error: "本團已截止或尚未選擇店家，暫時無法送出訂單。" }, { status: 409 });
+      if (!round) return Response.json({ error: "找不到這張團購訂單。請向管理者索取正確的點餐連結。" }, { status: 404 });
+      if (Date.now() >= Date.parse(round.closesAt)) return Response.json({ error: `這團已於 ${displayTime(round.closesAt)} 截止，無法送出訂單。請聯絡管理者調整截止時間。` }, { status: 409 });
+      if (round.status !== "open") return Response.json({ error: "這團目前關閉中。請聯絡管理者開放點餐後再送出。" }, { status: 409 });
+      if (round.restaurantId === null) return Response.json({ error: "這團尚未指定店家。請聯絡管理者先設定店家與菜單。" }, { status: 409 });
       const normalized: { item: MenuRow; quantity: number }[] = [];
       for (const line of items) {
         const id = Number(line.menuItemId); const quantity = Number(line.quantity);
         if (!Number.isInteger(id) || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) return Response.json({ error: "餐點數量不正確。" }, { status: 400 });
         const item = await database.prepare("SELECT m.id, m.name, m.description, m.price, COALESCE(a.available, 1) AS available FROM restaurant_menu_items m LEFT JOIN round_menu_availability a ON a.menu_item_id = m.id AND a.round_id = ? WHERE m.id = ? AND m.restaurant_id = ? AND m.active = 1").bind(round.id, id, round.restaurantId).first<MenuRow>();
-        if (!item || !item.available) return Response.json({ error: "有餐點已售完，請更新菜單後再送出。" }, { status: 409 });
+        if (!item) return Response.json({ error: "所選餐點已從這家店的菜單移除。請重新整理頁面並重新選餐。" }, { status: 409 });
+        if (!item.available) return Response.json({ error: `「${item.name}」已售完。請將此餐點數量設為 0，或重新整理後改選其他餐點。` }, { status: 409 });
         normalized.push({ item, quantity });
       }
       const orderId = crypto.randomUUID();
@@ -157,14 +176,15 @@ export async function POST(request: Request) {
     if (action === "update-round") {
       const title = typeof body.title === "string" ? body.title.trim().slice(0, 100) : "";
       const deadline = typeof body.deadline === "string" ? body.deadline : "";
-      if (!title || !/^([01]\d|2[0-3]):[0-5]\d$/.test(deadline)) return Response.json({ error: "請填寫團購名稱和有效的截止時間。" }, { status: 400 });
+      if (!title) return Response.json({ error: "店家名稱尚未填寫。請選擇店家或輸入名稱。" }, { status: 400 });
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(deadline)) return Response.json({ error: "截止時間不正確。請輸入 00:00～23:59 的時間。" }, { status: 400 });
       const roundId = Number(body.roundId);
-      if (!Number.isInteger(roundId) || roundId < 1) return Response.json({ error: "找不到這個團購。" }, { status: 400 });
+      if (!Number.isInteger(roundId) || roundId < 1) return Response.json({ error: "找不到這張團購訂單。請重新整理頁面，再從「所有團次」選擇訂單。" }, { status: 400 });
       const round = await database.prepare("SELECT title, restaurant_id AS restaurantId, order_date AS orderDate FROM order_rounds WHERE id = ?").bind(roundId).first<{ title: string; restaurantId: number | null; orderDate: string }>();
-      if (!round) return Response.json({ error: "找不到這個團購。" }, { status: 404 });
+      if (!round) return Response.json({ error: "找不到這張團購訂單。請重新整理頁面，再從「所有團次」選擇訂單。" }, { status: 404 });
       const date = round.orderDate;
       const closesAt = `${date}T${deadline}:00+08:00`;
-      if (Date.parse(closesAt) <= Date.now()) return Response.json({ error: "截止時間必須晚於現在。" }, { status: 400 });
+      if (Date.parse(closesAt) <= Date.now()) return Response.json({ error: `截止時間 ${displayTime(closesAt)} 已過期。這團日期是 ${date}，請將時間調整至現在之後；若要改為其他日期，請建立新訂單。` }, { status: 400 });
       if (round.title !== title) {
         const orderCount = await database.prepare("SELECT COUNT(*) AS count FROM orders WHERE round_id = ?").bind(roundId).first<{ count: number }>();
         if (orderCount?.count) return Response.json({ error: "這團已有訂單，無法更換店家；請建立新團以保留訂單紀錄。" }, { status: 409 });
@@ -184,10 +204,11 @@ export async function POST(request: Request) {
       const name = typeof body.name === "string" ? body.name.trim().slice(0, 80) : "";
       const description = typeof body.description === "string" ? body.description.trim().slice(0, 160) : "";
       const price = Number(body.price);
-      if (!name || !Number.isInteger(price) || price < 1 || price > 10000) return Response.json({ error: "請確認餐點名稱與價格。" }, { status: 400 });
+      if (!name) return Response.json({ error: "餐點名稱尚未填寫。請輸入名稱後再新增。" }, { status: 400 });
+      if (!Number.isInteger(price) || price < 1 || price > 10000) return Response.json({ error: "餐點價格不正確。請輸入 1～10,000 元的整數金額。" }, { status: 400 });
       const roundId = Number(body.roundId);
       const round = Number.isInteger(roundId) ? await database.prepare("SELECT id, restaurant_id AS restaurantId FROM order_rounds WHERE id = ?").bind(roundId).first<{ id: number; restaurantId: number | null }>() : null;
-      if (!round) return Response.json({ error: "找不到這個團購。" }, { status: 404 });
+      if (!round) return Response.json({ error: "找不到這張團購訂單。請重新整理頁面，再從「所有團次」選擇訂單。" }, { status: 404 });
       if (round.restaurantId === null) return Response.json({ error: "請先設定這團的店家。" }, { status: 409 });
       await database.prepare("INSERT INTO restaurant_menu_items (restaurant_id, name, description, price, active) VALUES (?, ?, ?, ?, 1)").bind(round.restaurantId, name, description, price).run();
       return Response.json({ ok: true });
@@ -195,7 +216,7 @@ export async function POST(request: Request) {
     if (action === "toggle-menu-item") {
       const roundId = Number(body.roundId);
       const round = Number.isInteger(roundId) ? await database.prepare("SELECT id, restaurant_id AS restaurantId FROM order_rounds WHERE id = ?").bind(roundId).first<{ id: number; restaurantId: number | null }>() : null;
-      if (!round) return Response.json({ error: "找不到這個團購。" }, { status: 404 });
+      if (!round) return Response.json({ error: "找不到這張團購訂單。請重新整理頁面，再從「所有團次」選擇訂單。" }, { status: 404 });
       if (round.restaurantId === null) return Response.json({ error: "請先設定這團的店家。" }, { status: 409 });
       const menuItemId = Number(body.menuItemId);
       const item = await database.prepare("SELECT m.id, COALESCE(a.available, 1) AS available FROM restaurant_menu_items m LEFT JOIN round_menu_availability a ON a.menu_item_id = m.id AND a.round_id = ? WHERE m.id = ? AND m.restaurant_id = ? AND m.active = 1").bind(round.id, menuItemId, round.restaurantId).first<{ id: number; available: number }>();
@@ -206,7 +227,7 @@ export async function POST(request: Request) {
     if (action === "remove-menu-item") {
       const roundId = Number(body.roundId);
       const round = Number.isInteger(roundId) ? await database.prepare("SELECT id, restaurant_id AS restaurantId FROM order_rounds WHERE id = ?").bind(roundId).first<{ id: number; restaurantId: number | null }>() : null;
-      if (!round) return Response.json({ error: "找不到這個團購。" }, { status: 404 });
+      if (!round) return Response.json({ error: "找不到這張團購訂單。請重新整理頁面，再從「所有團次」選擇訂單。" }, { status: 404 });
       if (round.restaurantId === null) return Response.json({ error: "請先設定這團的店家。" }, { status: 409 });
       const itemId = Number(body.menuItemId);
       const item = await database.prepare("SELECT id FROM restaurant_menu_items WHERE id = ? AND restaurant_id = ? AND active = 1").bind(itemId, round.restaurantId).first<{ id: number }>();
@@ -217,8 +238,8 @@ export async function POST(request: Request) {
     if (action === "toggle-round") {
       const roundId = Number(body.roundId);
       const currentRound = Number.isInteger(roundId) ? await database.prepare("SELECT id, status, closes_at AS closesAt FROM order_rounds WHERE id = ?").bind(roundId).first<{ id: number; status: "open" | "closed"; closesAt: string }>() : null;
-      if (!currentRound) return Response.json({ error: "找不到這個團購。" }, { status: 404 });
-      if (Date.now() >= Date.parse(currentRound.closesAt)) return Response.json({ error: "已超過截止時間，請調整時間後再開放。" }, { status: 409 });
+      if (!currentRound) return Response.json({ error: "找不到這張團購訂單。請重新整理頁面，再從「所有團次」選擇訂單。" }, { status: 404 });
+      if (Date.now() >= Date.parse(currentRound.closesAt)) return Response.json({ error: `這團的截止時間為 ${displayTime(currentRound.closesAt)}，目前已過期。請先在「設定所選團次」調整截止時間，再開放點餐。` }, { status: 409 });
       if (currentRound.status === "closed") {
         const count = await database.prepare("SELECT COUNT(*) AS count FROM order_rounds r JOIN restaurant_menu_items m ON m.restaurant_id = r.restaurant_id AND m.active = 1 LEFT JOIN round_menu_availability a ON a.round_id = r.id AND a.menu_item_id = m.id WHERE r.id = ? AND COALESCE(a.available, 1) = 1").bind(currentRound.id).first<{ count: number }>();
         if (!count?.count) return Response.json({ error: "請先新增至少一項供應中的餐點，再開放同事點餐。" }, { status: 409 });
@@ -232,6 +253,8 @@ export async function POST(request: Request) {
     }
     return Response.json({ error: "不支援的操作。" }, { status: 400 });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "操作失敗，請稍後再試。" }, { status: 500 });
+    const errorId = crypto.randomUUID().slice(0, 8);
+    console.error("ordering-operation", errorId, error);
+    return Response.json({ error: `系統未能完成這次操作。請重新整理並確認訂單狀態後再試；若持續失敗，請提供錯誤編號 ${errorId} 給系統管理者。`, errorId }, { status: 500 });
   }
 }

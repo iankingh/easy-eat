@@ -21,10 +21,21 @@ function newRoundDefaults() {
   };
 }
 
+async function readApiResponse(response: Response) {
+  let result: { error?: string };
+  try { result = await response.json(); }
+  catch { throw new Error(`伺服器回應異常（HTTP ${response.status}）。請重新整理後再試；若持續發生，請聯絡系統管理者。`); }
+  if (!response.ok) throw new Error(result.error || `操作未完成（HTTP ${response.status}）。請重新整理並確認訂單狀態後再試。`);
+  return result;
+}
+
 export default function Home() {
   const [data, setData] = useState<Data | null>(null);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("");
+  const [message, setMessageValue] = useState("");
+  const [messageIsError, setMessageIsError] = useState(false);
+  const setMessage = useCallback((value: string) => { setMessageValue(value); setMessageIsError(false); }, []);
+  const showError = useCallback((value: string) => { setMessageValue(value); setMessageIsError(true); }, []);
   const [tab, setTab] = useState<"order" | "admin">("order");
   const [adminCode, setAdminCode] = useState("");
   const [adminReady, setAdminReady] = useState(false);
@@ -46,14 +57,13 @@ export default function Home() {
     try {
       const query = selectedRoundId ? `?roundId=${encodeURIComponent(selectedRoundId)}` : "";
       const response = await fetch(`/api/ordering${query}`, { cache: "no-store", headers: tab === "admin" && adminReady ? { "x-admin-code": adminCode } : {} });
-      if (!response.ok) throw new Error("目前無法讀取點餐資料。");
-      setData(await response.json());
+      setData(await readApiResponse(response) as Data);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "讀取失敗，請稍後再試。");
+      showError(error instanceof TypeError ? "無法連線到點餐系統。請確認網路連線，再按重新整理。" : error instanceof Error ? error.message : "點餐資料讀取失敗。請重新整理後再試。");
     } finally {
       setLoading(false);
     }
-  }, [adminCode, adminReady, selectedRoundId, tab]);
+  }, [adminCode, adminReady, selectedRoundId, tab, showError]);
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
@@ -67,9 +77,13 @@ export default function Home() {
 
   async function mutate(body: Record<string, unknown>) {
     setMessage("");
-    const response = await fetch("/api/ordering", { method: "POST", headers: { "content-type": "application/json", ...(body.action === "place-order" ? {} : { "x-admin-code": adminCode }) }, body: JSON.stringify(body) });
-    const result = await response.json() as { error?: string };
-    if (!response.ok) throw new Error(result.error || "操作失敗，請稍後再試。");
+    let response: Response;
+    try {
+      response = await fetch("/api/ordering", { method: "POST", headers: { "content-type": "application/json", ...(body.action === "place-order" ? {} : { "x-admin-code": adminCode }) }, body: JSON.stringify(body) });
+    } catch {
+      throw new Error("無法確認操作結果，因為與伺服器的連線中斷。請確認網路並重新整理，查看訂單是否已建立或送出，再決定是否重試。");
+    }
+    const result = await readApiResponse(response);
     await refresh();
     return result;
   }
@@ -81,7 +95,7 @@ export default function Home() {
       await mutate({ action: "place-order", roundId: data?.round.id, name: employeeName.trim(), account: account.trim(), note: note.trim(), items });
       setQuantities({}); setNote("");
       setMessage("訂單已送出，管理者可以在後台查看。");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "送出失敗。"); }
+    } catch (error) { showError(error instanceof Error ? error.message : "送出失敗。"); }
   }
 
   async function addMenuItem(event: React.FormEvent<HTMLFormElement>) {
@@ -90,13 +104,13 @@ export default function Home() {
       await mutate({ action: "add-menu-item", roundId: data?.round.id, ...newItem, price: Number(newItem.price) });
       setNewItem({ name: "", description: "", price: "" });
       setMessage("餐點已加入菜單。");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "新增失敗。"); }
+    } catch (error) { showError(error instanceof Error ? error.message : "新增失敗。"); }
   }
 
   async function saveRound(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try { await mutate({ action: "update-round", roundId: data?.round.id, title: groupTitle, deadline }); setMessage("團購設定已儲存。"); }
-    catch (error) { setMessage(error instanceof Error ? error.message : "設定儲存失敗。"); }
+    catch (error) { showError(error instanceof Error ? error.message : "設定儲存失敗。"); }
   }
 
   function selectRound(roundId: number | string) {
@@ -120,7 +134,7 @@ export default function Home() {
     } catch (error) {
       const text = error instanceof Error ? error.message : "建立團購失敗。";
       setCreateError(text);
-      setMessage(text);
+      showError(text);
     } finally { setCreatingRound(false); }
   }
 
@@ -142,7 +156,7 @@ export default function Home() {
       setData(await snapshot.json());
       setAdminReady(true);
       setMessage("後台已解鎖。");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "無法解鎖後台。"); }
+    } catch (error) { showError(error instanceof Error ? error.message : "無法解鎖後台。"); }
   }
 
   async function runAdmin(action: string, extra: Record<string, unknown> = {}) {
@@ -151,7 +165,7 @@ export default function Home() {
       const messages: Record<string, string> = { "toggle-round": "團購狀態已更新。", "toggle-order": "訂單狀態已更新。", "toggle-menu-item": "餐點供應狀態已更新。", "remove-menu-item": "餐點已從今日菜單移除。" };
       setMessage(messages[action] || "設定已更新。");
     }
-    catch (error) { setMessage(error instanceof Error ? error.message : "操作失敗。"); }
+    catch (error) { showError(error instanceof Error ? error.message : "操作失敗。"); }
   }
 
   useEffect(() => {
@@ -224,7 +238,7 @@ export default function Home() {
             <button onClick={() => void refresh()} className="rounded-xl border border-[#d9e0e4] bg-white px-4 py-2.5 text-sm font-semibold text-[#40505c] hover:bg-[#f8fafb]">重新整理</button>
           </div>
 
-          {message && <div role="status" className="mb-5 rounded-xl border border-[#c7ded3] bg-[#edf7f1] px-4 py-3 text-sm font-medium text-[#245c45]">{message}</div>}
+          {message && <div role={messageIsError ? "alert" : "status"} className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${messageIsError ? "border-red-200 bg-red-50 text-red-800" : "border-[#c7ded3] bg-[#edf7f1] text-[#245c45]"}`}>{message}</div>}
           {loading && <div className="rounded-2xl border border-[#e1e6eb] bg-white p-8 text-[#65727e]">載入點餐資料中…</div>}
           {!loading && data && (tab === "order" ? (
             <form onSubmit={submitOrder} className="space-y-5">
@@ -264,7 +278,7 @@ export default function Home() {
                   {restaurantChoices.map(restaurant => <button key={restaurant} type="button" aria-pressed={newRound.title === restaurant} onClick={() => setNewRound(value => ({ ...value, title: restaurant }))} className={`rounded-xl border px-4 py-2.5 text-sm font-semibold ${newRound.title === restaurant ? "border-[#163d35] bg-[#163d35] text-white" : "border-[#d9e0e4] text-[#40505c] hover:bg-[#f4f6f8]"}`}>{restaurant}</button>)}
                   <button type="button" onClick={() => setNewRound(value => ({ ...value, title: restaurantChoices[Math.floor(Math.random() * restaurantChoices.length)] }))} className="rounded-xl border border-[#d9e0e4] bg-[#fff7ef] px-4 py-2.5 text-sm font-bold text-[#8f4f2d] hover:bg-[#fff0e2]">🎲 隨機選一家</button>
                 </div></div>
-                <form onSubmit={createRound} className="grid gap-4 sm:grid-cols-[1fr_170px_150px_auto] sm:items-end">
+                <form noValidate onSubmit={createRound} className="grid gap-4 sm:grid-cols-[1fr_170px_150px_auto] sm:items-end">
                   <label className="text-sm font-semibold">店家名稱<input required maxLength={100} value={newRound.title} onChange={e => setNewRound(value => ({ ...value, title: e.target.value }))} placeholder="例如：飲料店、健康餐、麵店" className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
                   <label className="text-sm font-semibold">團購日期<input required type="date" min={todayInTaipei()} value={newRound.orderDate} onChange={e => setNewRound(value => ({ ...value, orderDate: e.target.value }))} className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
                   <label className="text-sm font-semibold">截止時間<input required type="time" value={newRound.deadline} onChange={e => setNewRound(value => ({ ...value, deadline: e.target.value }))} className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
