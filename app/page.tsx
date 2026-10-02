@@ -4,11 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 type MenuItem = { id: number; name: string; description: string; price: number; available: number };
 type Round = { id: number; title: string; orderDate: string; closesAt: string; status: "open" | "closed" };
+type RoundSummary = Round & { orderCount: number; orderTotal: number };
 type Order = { id: number; name: string; account: string; note: string; status: "new" | "received"; items: { name: string; quantity: number; price: number }[]; total: number };
-type Data = { round: Round; menu: MenuItem[]; orders: Order[]; orderCount: number; orderTotal: number };
+type Data = { round: Round; menu: MenuItem[]; orders: Order[]; orderCount: number; orderTotal: number; rounds: RoundSummary[] };
 
 const money = (amount: number) => new Intl.NumberFormat("zh-TW", { style: "currency", currency: "TWD", maximumFractionDigits: 0 }).format(amount);
 const restaurantChoices = ["藍色給力", "綠色給力", "八方"];
+const todayInTaipei = () => new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(new Date());
 
 export default function Home() {
   const [data, setData] = useState<Data | null>(null);
@@ -24,11 +26,14 @@ export default function Home() {
   const [newItem, setNewItem] = useState({ name: "", description: "", price: "" });
   const [groupTitle, setGroupTitle] = useState("");
   const [deadline, setDeadline] = useState("10:30");
+  const [selectedRoundId, setSelectedRoundId] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("round") || "");
+  const [newRound, setNewRound] = useState({ title: "", orderDate: todayInTaipei(), deadline: "10:30" });
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch("/api/ordering", { cache: "no-store", headers: tab === "admin" && adminReady ? { "x-admin-code": adminCode } : {} });
+      const query = selectedRoundId ? `?roundId=${encodeURIComponent(selectedRoundId)}` : "";
+      const response = await fetch(`/api/ordering${query}`, { cache: "no-store", headers: tab === "admin" && adminReady ? { "x-admin-code": adminCode } : {} });
       if (!response.ok) throw new Error("目前無法讀取點餐資料。");
       setData(await response.json());
     } catch (error) {
@@ -36,7 +41,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [adminCode, adminReady, tab]);
+  }, [adminCode, adminReady, selectedRoundId, tab]);
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
@@ -61,7 +66,7 @@ export default function Home() {
     event.preventDefault();
     try {
       const items = Object.entries(quantities).filter(([, quantity]) => quantity > 0).map(([id, quantity]) => ({ menuItemId: Number(id), quantity }));
-      await mutate({ action: "place-order", name: employeeName.trim(), account: account.trim(), note: note.trim(), items });
+      await mutate({ action: "place-order", roundId: data?.round.id, name: employeeName.trim(), account: account.trim(), note: note.trim(), items });
       setQuantities({}); setNote("");
       setMessage("訂單已送出，管理者可以在後台查看。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "送出失敗。"); }
@@ -70,7 +75,7 @@ export default function Home() {
   async function addMenuItem(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      await mutate({ action: "add-menu-item", ...newItem, price: Number(newItem.price) });
+      await mutate({ action: "add-menu-item", roundId: data?.round.id, ...newItem, price: Number(newItem.price) });
       setNewItem({ name: "", description: "", price: "" });
       setMessage("餐點已加入菜單。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "新增失敗。"); }
@@ -78,8 +83,32 @@ export default function Home() {
 
   async function saveRound(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    try { await mutate({ action: "update-round", title: groupTitle, deadline }); setMessage("今日團購設定已儲存。"); }
+    try { await mutate({ action: "update-round", roundId: data?.round.id, title: groupTitle, deadline }); setMessage("團購設定已儲存。"); }
     catch (error) { setMessage(error instanceof Error ? error.message : "設定儲存失敗。"); }
+  }
+
+  function selectRound(roundId: number | string) {
+    const id = String(roundId);
+    setSelectedRoundId(id);
+    const url = new URL(window.location.href);
+    url.searchParams.set("round", id);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+
+  async function createRound(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      const result = await mutate({ action: "create-round", ...newRound }) as { roundId: number };
+      setNewRound({ title: "", orderDate: todayInTaipei(), deadline: "10:30" });
+      selectRound(result.roundId);
+      setMessage("新團已建立；新增餐點後即可產生點餐連結並開放。");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "建立團購失敗。"); }
+  }
+
+  async function copyRoundLink(roundId: number) {
+    const link = `${window.location.origin}/?round=${roundId}`;
+    try { await navigator.clipboard.writeText(link); setMessage("這團的點餐連結已複製。"); }
+    catch { window.prompt("複製這團的點餐連結", link); }
   }
 
   async function verifyAdmin(event: React.FormEvent<HTMLFormElement>) {
@@ -88,7 +117,8 @@ export default function Home() {
       const response = await fetch("/api/ordering", { method: "POST", headers: { "content-type": "application/json", "x-admin-code": adminCode }, body: JSON.stringify({ action: "admin-check" }) });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "管理碼不正確。");
-      const snapshot = await fetch("/api/ordering", { cache: "no-store", headers: { "x-admin-code": adminCode } });
+      const query = selectedRoundId ? `?roundId=${encodeURIComponent(selectedRoundId)}` : "";
+      const snapshot = await fetch(`/api/ordering${query}`, { cache: "no-store", headers: { "x-admin-code": adminCode } });
       if (!snapshot.ok) throw new Error("無法載入管理資料，請重試。");
       setData(await snapshot.json());
       setAdminReady(true);
@@ -98,7 +128,7 @@ export default function Home() {
 
   async function runAdmin(action: string, extra: Record<string, unknown> = {}) {
     try {
-      await mutate({ action, ...extra });
+      await mutate({ action, roundId: data?.round.id, ...extra });
       const messages: Record<string, string> = { "toggle-round": "團購狀態已更新。", "toggle-order": "訂單狀態已更新。", "toggle-menu-item": "餐點供應狀態已更新。", "remove-menu-item": "餐點已從今日菜單移除。" };
       setMessage(messages[action] || "設定已更新。");
     }
@@ -114,14 +144,15 @@ export default function Home() {
     void Promise.resolve(context.registerTool({
       name: "read_lunch_menu",
       title: "查看今日午餐菜單",
-      description: "讀取目前午餐團購的截止時間、餐點、價格與供應狀態。",
+      description: "讀取目前這團的名稱、截止時間、餐點、價格與供應狀態。",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: true, untrustedContentHint: true },
       async execute() {
-        const response = await fetch("/api/ordering", { cache: "no-store" });
+        const query = selectedRoundId ? `?roundId=${encodeURIComponent(selectedRoundId)}` : "";
+        const response = await fetch(`/api/ordering${query}`, { cache: "no-store" });
         if (!response.ok) throw new Error("目前無法讀取午餐菜單。");
         const snapshot = await response.json() as Data;
-        return { round: snapshot.round, menu: snapshot.menu.map(item => ({ name: item.name, description: item.description, price: item.price, available: Boolean(item.available) })) };
+        return { roundId: snapshot.round.id, round: snapshot.round, menu: snapshot.menu.map(item => ({ id: item.id, name: item.name, description: item.description, price: item.price, available: Boolean(item.available) })) };
       },
     }, { signal: lifecycle.signal })).catch(reportError);
     void Promise.resolve(context.registerTool({
@@ -131,7 +162,10 @@ export default function Home() {
       inputSchema: { type: "object", properties: { name: { type: "string", minLength: 1, maxLength: 60 }, account: { type: "string", minLength: 1, maxLength: 80 }, note: { type: "string", maxLength: 160 }, items: { type: "array", minItems: 1, maxItems: 30, items: { type: "object", properties: { menuItemId: { type: "integer" }, quantity: { type: "integer", minimum: 1, maximum: 20 } }, required: ["menuItemId", "quantity"], additionalProperties: false } } }, required: ["name", "account", "items"], additionalProperties: false },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
       async execute(input) {
-        const response = await fetch("/api/ordering", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...(input as Record<string, unknown>), action: "place-order" }) });
+        const query = selectedRoundId ? `?roundId=${encodeURIComponent(selectedRoundId)}` : "";
+        const snapshotResponse = await fetch(`/api/ordering${query}`, { cache: "no-store" });
+        const snapshot = await snapshotResponse.json() as Data;
+        const response = await fetch("/api/ordering", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...(input as Record<string, unknown>), roundId: snapshot.round.id, action: "place-order" }) });
         const result = await response.json();
         if (!response.ok) throw new Error((result as { error?: string }).error || "訂單送出失敗。");
         await refresh();
@@ -140,7 +174,7 @@ export default function Home() {
       },
     }, { signal: lifecycle.signal })).catch(reportError);
     return () => lifecycle.abort();
-  }, [refresh]);
+  }, [refresh, selectedRoundId]);
 
   const totalOrders = data?.orderCount ?? 0;
   const orderTotal = data?.orderTotal ?? 0;
@@ -165,8 +199,8 @@ export default function Home() {
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
               <p className="mb-2 text-sm font-bold tracking-wide text-[#a65c36]">{tab === "order" ? "DAILY LUNCH" : "ORDER CONTROL"}</p>
-              <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{tab === "order" ? "今日午餐" : "團購管理"}</h1>
-              <p className="mt-2 text-base text-[#65727e]">{tab === "order" ? "選好餐點、留下姓名與帳號，送出就完成。" : "掌握訂單、菜單與本次團購狀態。"}</p>
+              <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{tab === "order" ? (data?.round.title || "團購點餐") : "團購管理"}</h1>
+              <p className="mt-2 text-base text-[#65727e]">{tab === "order" ? "選好餐點、留下姓名與帳號，送出就完成。" : "建立團次、查看不同訂單，並管理各團點餐連結。"}</p>
             </div>
             <button onClick={() => void refresh()} className="rounded-xl border border-[#d9e0e4] bg-white px-4 py-2.5 text-sm font-semibold text-[#40505c] hover:bg-[#f8fafb]">重新整理</button>
           </div>
@@ -206,7 +240,26 @@ export default function Home() {
           ) : (
             <div className="space-y-5">
               <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
-                <div className="mb-4"><h2 className="text-lg font-bold">設定今日要開的團</h2><p className="mt-1 text-sm text-[#65727e]">先填店家或團購名稱與截止時間，再維護今日菜單。</p></div>
+                <div className="mb-4"><h2 className="text-lg font-bold">建立新團</h2><p className="mt-1 text-sm text-[#65727e]">每一團都有自己的訂單、菜單與點餐連結；建立後先關閉，準備好再開放。</p></div>
+                <div className="mb-4"><p className="mb-2 text-sm font-semibold">快速選店</p><div className="flex flex-wrap gap-2">
+                  {restaurantChoices.map(restaurant => <button key={restaurant} type="button" aria-pressed={newRound.title === restaurant} onClick={() => setNewRound(value => ({ ...value, title: restaurant }))} className={`rounded-xl border px-4 py-2.5 text-sm font-semibold ${newRound.title === restaurant ? "border-[#163d35] bg-[#163d35] text-white" : "border-[#d9e0e4] text-[#40505c] hover:bg-[#f4f6f8]"}`}>{restaurant}</button>)}
+                  <button type="button" onClick={() => setNewRound(value => ({ ...value, title: restaurantChoices[Math.floor(Math.random() * restaurantChoices.length)] }))} className="rounded-xl border border-[#d9e0e4] bg-[#fff7ef] px-4 py-2.5 text-sm font-bold text-[#8f4f2d] hover:bg-[#fff0e2]">🎲 隨機選一家</button>
+                </div></div>
+                <form onSubmit={createRound} className="grid gap-4 sm:grid-cols-[1fr_170px_150px_auto] sm:items-end">
+                  <label className="text-sm font-semibold">團購名稱<input required maxLength={100} value={newRound.title} onChange={e => setNewRound(value => ({ ...value, title: e.target.value }))} placeholder="例如：八方" className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
+                  <label className="text-sm font-semibold">團購日期<input required type="date" min={todayInTaipei()} value={newRound.orderDate} onChange={e => setNewRound(value => ({ ...value, orderDate: e.target.value }))} className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
+                  <label className="text-sm font-semibold">截止時間<input required type="time" value={newRound.deadline} onChange={e => setNewRound(value => ({ ...value, deadline: e.target.value }))} className="mt-2 h-12 w-full rounded-xl border border-[#d9e0e4] px-3 text-base font-normal" /></label>
+                  <button className="h-12 rounded-xl bg-[#163d35] px-5 font-bold text-white">建立團購</button>
+                </form>
+              </section>
+
+              <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
+                <div className="mb-4 flex items-center justify-between gap-3"><div><h2 className="text-lg font-bold">所有團次</h2><p className="mt-1 text-sm text-[#65727e]">選擇團次查看訂單，或複製該團的點餐連結。</p></div><span className="rounded-full bg-[#f1f4f5] px-3 py-1 text-sm font-semibold">{data.rounds.length} 團</span></div>
+                {data.rounds.length === 0 ? <p className="rounded-xl bg-[#f5f7f8] p-4 text-sm text-[#65727e]">目前沒有團次。</p> : <div className="space-y-2">{data.rounds.map(round => <article key={round.id} className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 ${String(round.id) === selectedRoundId ? "border-[#7a9a8f] bg-[#f2f7f4]" : "border-[#e7ecef]"}`}><div className="min-w-[180px] flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-bold">{round.title}</p><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${round.status === "open" ? "bg-[#e8f4ed] text-[#286148]" : "bg-[#f1f4f5] text-[#65727e]"}`}>{round.status === "open" ? "開放中" : "已關閉"}</span></div><p className="mt-1 text-sm text-[#65727e]">{round.orderDate}　·　{round.orderCount} 人　·　{money(round.orderTotal)}</p></div><div className="flex flex-wrap gap-2">{round.status === "open" && <button onClick={() => void runAdmin("toggle-round", { roundId: round.id })} className="rounded-lg border border-[#d9e0e4] px-3 py-2 text-sm font-semibold text-[#934c29]">關閉訂單</button>}<button onClick={() => selectRound(round.id)} className="rounded-lg border border-[#d9e0e4] px-3 py-2 text-sm font-semibold">管理這團</button><button onClick={() => void copyRoundLink(round.id)} className="rounded-lg bg-[#163d35] px-3 py-2 text-sm font-semibold text-white">複製點餐連結 🔗</button></div></article>)}</div>}
+              </section>
+
+              <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
+                <div className="mb-4"><h2 className="text-lg font-bold">設定所選團次</h2><p className="mt-1 text-sm text-[#65727e]">更新團名或截止時間；完成菜單後，可以在訂單狀態區開放點餐。</p></div>
                 <div className="mb-4">
                   <p className="mb-2 text-sm font-semibold">快速選店</p>
                   <div className="flex flex-wrap gap-2">
