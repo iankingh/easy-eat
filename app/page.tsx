@@ -101,7 +101,7 @@ export default function Home() {
       const result = await mutate({ action: "create-round", ...newRound }) as { roundId: number };
       setNewRound({ title: "", orderDate: todayInTaipei(), deadline: "10:30" });
       selectRound(result.roundId);
-      setMessage("新團已建立；新增餐點後即可產生點餐連結並開放。");
+      setMessage("新團已建立；菜單已沿用該店最近一次團次（若有），確認菜單後即可開放點餐。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "建立團購失敗。"); }
   }
 
@@ -259,7 +259,7 @@ export default function Home() {
               </section>
 
               <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5 sm:p-6">
-                <div className="mb-4"><h2 className="text-lg font-bold">設定所選團次</h2><p className="mt-1 text-sm text-[#65727e]">更新團名或截止時間；完成菜單後，可以在訂單狀態區開放點餐。</p></div>
+                <div className="mb-4"><h2 className="text-lg font-bold">設定所選團次</h2><p className="mt-1 text-sm text-[#65727e]">改選店家會載入該店最近一次團次的菜單，供應狀態會重設；已有訂單後不能更換店家。第一次開團請自行新增餐點。</p></div>
                 <div className="mb-4">
                   <p className="mb-2 text-sm font-semibold">快速選店</p>
                   <div className="flex flex-wrap gap-2">

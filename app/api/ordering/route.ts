@@ -24,6 +24,14 @@ function isAdmin(request: Request) {
   return Boolean(secret && request.headers.get("x-admin-code") === secret);
 }
 
+async function latestRestaurantRound(database: D1Database, title: string, excludeRoundId: number, onOrBefore: string) {
+  return database.prepare("SELECT id FROM order_rounds WHERE title = ? AND id != ? AND order_date <= ? ORDER BY order_date DESC, id DESC LIMIT 1").bind(title, excludeRoundId, onOrBefore).first<{ id: number }>();
+}
+
+async function copyRestaurantMenu(database: D1Database, sourceRoundId: number, targetRoundId: number) {
+  await database.prepare("INSERT INTO menu_items (round_id, name, description, price, available) SELECT ?, name, description, price, 1 FROM menu_items WHERE round_id = ? ORDER BY id").bind(targetRoundId, sourceRoundId).run();
+}
+
 async function ensureStarterData(database: D1Database) {
   const now = taipeiNow();
   const date = taipeiDate();
@@ -108,10 +116,14 @@ export async function POST(request: Request) {
       const reusable = await database.prepare("SELECT r.id FROM order_rounds r WHERE r.order_date = ? AND r.title = '尚未設定今日團購' AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.round_id = r.id) AND NOT EXISTS (SELECT 1 FROM menu_items m WHERE m.round_id = r.id) ORDER BY r.id DESC LIMIT 1").bind(orderDate).first<{ id: number }>();
       if (reusable) {
         await database.prepare("UPDATE order_rounds SET title = ?, closes_at = ?, status = 'closed' WHERE id = ?").bind(title, closesAt, reusable.id).run();
+        const source = await latestRestaurantRound(database, title, reusable.id, orderDate);
+        if (source) await copyRestaurantMenu(database, source.id, reusable.id);
         return Response.json({ ok: true, roundId: reusable.id });
       }
       const created = await database.prepare("INSERT INTO order_rounds (title, order_date, closes_at, status) VALUES (?, ?, ?, 'closed') RETURNING id").bind(title, orderDate, closesAt).first<{ id: number }>();
       if (!created) throw new Error("建立團購失敗，請再試一次。");
+      const source = await latestRestaurantRound(database, title, created.id, orderDate);
+      if (source) await copyRestaurantMenu(database, source.id, created.id);
       return Response.json({ ok: true, roundId: created.id });
     }
 
@@ -146,11 +158,21 @@ export async function POST(request: Request) {
       if (!title || !/^([01]\d|2[0-3]):[0-5]\d$/.test(deadline)) return Response.json({ error: "請填寫團購名稱和有效的截止時間。" }, { status: 400 });
       const roundId = Number(body.roundId);
       if (!Number.isInteger(roundId) || roundId < 1) return Response.json({ error: "找不到這個團購。" }, { status: 400 });
-      const round = await database.prepare("SELECT order_date AS orderDate FROM order_rounds WHERE id = ?").bind(roundId).first<{ orderDate: string }>();
+      const round = await database.prepare("SELECT title, order_date AS orderDate FROM order_rounds WHERE id = ?").bind(roundId).first<{ title: string; orderDate: string }>();
       if (!round) return Response.json({ error: "找不到這個團購。" }, { status: 404 });
       const date = round.orderDate;
       const closesAt = `${date}T${deadline}:00+08:00`;
       if (Date.parse(closesAt) <= Date.now()) return Response.json({ error: "截止時間必須晚於現在。" }, { status: 400 });
+      if (round.title !== title) {
+        const orderCount = await database.prepare("SELECT COUNT(*) AS count FROM orders WHERE round_id = ?").bind(roundId).first<{ count: number }>();
+        if (orderCount?.count) return Response.json({ error: "這團已有訂單，無法更換店家；請建立新團以保留訂單紀錄。" }, { status: 409 });
+        const source = await latestRestaurantRound(database, title, roundId, date);
+        const statements = [database.prepare("DELETE FROM menu_items WHERE round_id = ?").bind(roundId)];
+        if (source) statements.push(database.prepare("INSERT INTO menu_items (round_id, name, description, price, available) SELECT ?, name, description, price, 1 FROM menu_items WHERE round_id = ? ORDER BY id").bind(roundId, source.id));
+        statements.push(database.prepare("UPDATE order_rounds SET title = ?, closes_at = ? WHERE id = ?").bind(title, closesAt, roundId));
+        await database.batch(statements);
+        return Response.json({ ok: true });
+      }
       await database.prepare("UPDATE order_rounds SET title = ?, closes_at = ? WHERE id = ?").bind(title, closesAt, roundId).run();
       return Response.json({ ok: true });
     }
