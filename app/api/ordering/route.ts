@@ -77,6 +77,10 @@ async function getSnapshot(database: D1Database, request: Request, includeOrders
     const result = await database.prepare("SELECT r.id, r.title, r.restaurant_id AS restaurantId, r.order_date AS orderDate, r.closes_at AS closesAt, r.status, COUNT(DISTINCT o.account) AS orderCount, COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS orderTotal FROM order_rounds r LEFT JOIN orders o ON o.round_id = r.id LEFT JOIN order_items oi ON oi.order_id = o.id GROUP BY r.id ORDER BY r.order_date DESC, r.id DESC LIMIT 100").all<RoundRow & { orderCount: number; orderTotal: number }>();
     rounds = result.results.map(item => ({ ...item, status: item.status === "open" && Date.now() >= Date.parse(item.closesAt) ? "closed" : item.status }));
   }
+  let restaurants: { id: number; name: string; menuCount: number }[] = [];
+  if (includeOrders) {
+    restaurants = (await database.prepare("SELECT r.id, r.name, COUNT(m.id) AS menuCount FROM restaurants r LEFT JOIN restaurant_menu_items m ON m.restaurant_id = r.id AND m.active = 1 GROUP BY r.id ORDER BY r.name").all<{ id: number; name: string; menuCount: number }>()).results;
+  }
   let orders: unknown[] = [];
   if (includeOrders) {
     const rows = await database.prepare("SELECT o.id, o.employee_name AS name, o.account, o.note, o.status, COALESCE(oi.item_name, i.name) AS itemName, oi.quantity, oi.unit_price AS price FROM orders o LEFT JOIN order_items oi ON oi.order_id = o.id LEFT JOIN menu_items i ON i.id = oi.menu_item_id WHERE o.round_id = ? ORDER BY o.created_at DESC, o.id").bind(round.id).all<{ id: string; name: string; account: string; note: string; status: "new" | "received"; itemName: string | null; quantity: number | null; price: number | null }>();
@@ -88,7 +92,7 @@ async function getSnapshot(database: D1Database, request: Request, includeOrders
     }
     orders = [...byId.values()];
   }
-  return Response.json({ round, menu: menu.results, orderCount: summary?.count ?? 0, orderTotal: summary?.total ?? 0, orders, rounds }, { headers: { "cache-control": "no-store" } });
+  return Response.json({ round, menu: menu.results, orderCount: summary?.count ?? 0, orderTotal: summary?.total ?? 0, orders, rounds, restaurants }, { headers: { "cache-control": "no-store" } });
 }
 
 export async function GET(request: Request) {
@@ -217,6 +221,20 @@ export async function POST(request: Request) {
       if (!round) return Response.json({ error: "找不到這張團購訂單。請重新整理頁面，再從「所有團次」選擇訂單。" }, { status: 404 });
       if (round.restaurantId === null) return Response.json({ error: "請先設定這團的店家。" }, { status: 409 });
       await database.prepare("INSERT INTO restaurant_menu_items (restaurant_id, name, description, price, active) VALUES (?, ?, ?, ?, 1)").bind(round.restaurantId, name, description, price).run();
+      return Response.json({ ok: true });
+    }
+    if (action === "update-menu-item") {
+      const name = typeof body.name === "string" ? body.name.trim().slice(0, 80) : "";
+      const description = typeof body.description === "string" ? body.description.trim().slice(0, 160) : "";
+      const price = Number(body.price);
+      if (!name) return Response.json({ error: "餐點名稱尚未填寫。請輸入名稱後再儲存。" }, { status: 400 });
+      if (!Number.isInteger(price) || price < 1 || price > 10000) return Response.json({ error: "餐點價格不正確。請輸入 1～10,000 元的整數金額。" }, { status: 400 });
+      const roundId = Number(body.roundId);
+      const itemId = Number(body.menuItemId);
+      if (!Number.isInteger(roundId) || !Number.isInteger(itemId)) return Response.json({ error: "餐點資料不正確。請重新整理菜單後再編輯。" }, { status: 400 });
+      const item = await database.prepare("SELECT m.id FROM restaurant_menu_items m JOIN order_rounds r ON r.restaurant_id = m.restaurant_id WHERE r.id = ? AND m.id = ? AND m.active = 1").bind(roundId, itemId).first<{ id: number }>();
+      if (!item) return Response.json({ error: "這項餐點不屬於所選店家，或已被移除。請重新整理菜單後再編輯。" }, { status: 404 });
+      await database.prepare("UPDATE restaurant_menu_items SET name = ?, description = ?, price = ? WHERE id = ? AND active = 1").bind(name, description, price, itemId).run();
       return Response.json({ ok: true });
     }
     if (action === "toggle-menu-item") {

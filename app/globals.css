@@ -53,10 +53,12 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--background); color: var(--foreground); font-family: Arial, "Noto Sans TC", sans-serif; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { cursor: pointer; }
-button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid #78a398; outline-offset: 2px; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #78a398; outline-offset: 2px; }
 @media print {
   header, aside, nav, button, form > .sticky { display: none !important; }
   body, main { background: white !important; }
 }
+
+button:disabled, input:disabled { cursor: not-allowed; opacity: 0.55; }
