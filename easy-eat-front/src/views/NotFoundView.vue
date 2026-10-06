@@ -37,6 +37,6 @@ h1 {
 
 p {
   margin-bottom: 8px;
-  color: #777;
+  color: #666;
 }
 </style>

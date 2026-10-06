@@ -23,6 +23,7 @@ npm run dev
 - 餐點統計（排除草稿與取消訂單）
 - 餐廳、餐點、餐點分類 CRUD 與啟用狀態管理
 - 刪除餐廳、餐點及分類時的關聯資料保護
+- 訂單操作的共用非同步 loading 與 toast 成功／錯誤回饋
 - Mock schema 自動遷移及預設資料重置
 
 ## 架構
@@ -84,12 +85,27 @@ npm run type-check     # TypeScript / Vue 型別檢查
 npm test               # 執行測試
 npm run test:watch     # 監看模式測試
 npm run test:coverage  # 測試覆蓋率
+npm run test:e2e       # Playwright；自行啟停 Vite，headless Chromium
+npm run test:e2e:ui    # Playwright UI
+npm run type-check:e2e # 瀏覽器測試與設定的型別檢查
 npm run lint           # ESLint 檢查
 npm run lint:fix       # 自動修正 ESLint 問題
 npm run format         # Prettier 格式化
 npm run format:check   # Prettier 格式檢查
 npm run check          # type-check + lint + format:check
 ```
+
+測試涵蓋 API、Service、Store、Mock Server、router／404、App／Toast、訂單 views、
+餐點統計與後台 CRUD，以及載入、錯誤、重試與空資料狀態。
+
+瀏覽器測試首次執行前需 `npx playwright install chromium`；已有瀏覽器時可設定
+`CHROME_BIN=/absolute/path/to/chrome`。每個 test 使用獨立 context，只清除 Mock DB
+key，保留同一 test 的 reload 資料。E2E 透過 UI 驗證草稿持久化、編輯、送出、
+完成，以及後台建立分類／餐廳／餐點後實際點餐；不直接操作 Store 或 seed 資料。
+五個主要 route 的 axe `critical`／`serious` violations 必須為零，完整 axe 結果
+會附於 report；另驗 keyboard 與可見 focus。失敗保留 HTML report、trace、
+screenshot、video，執行錯誤不會當成成功。2026-10-05 實跑 178 個 Vitest tests、
+9 個 E2E、品質檢查與 production build 全部通過。
 
 ## 相關文件
 

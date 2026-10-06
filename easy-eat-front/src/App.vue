@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterView } from 'vue-router'
 import AppSidebar from '@/components/AppSidebar.vue'
 import ToastNotification from '@/components/ToastNotification.vue'
+import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import { useOrderStore } from '@/stores/order'
 import { useRestaurantStore } from '@/stores/restaurant'
 
@@ -10,7 +11,11 @@ const orderStore = useOrderStore()
 const restaurantStore = useRestaurantStore()
 
 const bootstrapping = ref(true)
-const appError = computed(() => orderStore.errorMessage || restaurantStore.errorMessage)
+const appError = computed(
+  () =>
+    (!orderStore.initialized && orderStore.errorMessage) ||
+    (!restaurantStore.initialized && restaurantStore.errorMessage),
+)
 
 onMounted(() => {
   void initializeApp()
@@ -29,10 +34,14 @@ async function initializeApp() {
     </header>
     <div class="app-body">
       <AppSidebar />
-      <main class="app-main">
-        <div v-if="bootstrapping" class="app-status">資料載入中...</div>
-        <div v-else-if="appError" class="app-status app-status-error">{{ appError }}</div>
-        <RouterView v-if="!bootstrapping" />
+      <main class="app-main" :aria-busy="bootstrapping">
+        <div v-if="bootstrapping" class="app-status">
+          <LoadingSpinner label="應用程式資料載入中" />
+        </div>
+        <div v-else-if="appError" class="app-status app-status-error" role="alert">
+          {{ appError }}
+        </div>
+        <RouterView v-else />
       </main>
     </div>
     <footer class="app-footer">

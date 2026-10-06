@@ -352,7 +352,7 @@ function setSortBy(event: Event) {
 
 .result-count {
   margin-top: 5px;
-  color: #718096;
+  color: #4a5568;
   font-size: 0.84rem;
 }
 
@@ -426,7 +426,7 @@ function setSortBy(event: Event) {
 }
 
 .menu-count {
-  color: #718096;
+  color: #4a5568;
   font-size: 0.82rem;
 }
 

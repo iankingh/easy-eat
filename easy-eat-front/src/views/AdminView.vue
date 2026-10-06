@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import CategoryManagement from '@/components/admin/CategoryManagement.vue'
 import RestaurantManagement from '@/components/admin/RestaurantManagement.vue'
+import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import { useToast } from '@/composables/useToast'
 import { useOrderStore } from '@/stores/order'
 import { useRestaurantStore } from '@/stores/restaurant'
@@ -58,7 +59,7 @@ async function resetMockData() {
 </script>
 
 <template>
-  <section class="page-section admin-page" aria-labelledby="admin-title">
+  <section class="page-section admin-page" aria-labelledby="admin-title" :aria-busy="pageBusy">
     <div class="section-header">
       <div>
         <h1 id="admin-title">後台設定</h1>
@@ -73,7 +74,9 @@ async function resetMockData() {
       {{ pageError || restaurantStore.errorMessage }}
     </p>
 
-    <div v-if="initializing" class="loading-state" role="status">後台資料載入中…</div>
+    <div v-if="initializing" class="loading-state">
+      <LoadingSpinner label="後台資料載入中" />
+    </div>
 
     <template v-else>
       <nav class="admin-tabs" aria-label="後台管理項目">
@@ -114,7 +117,7 @@ async function resetMockData() {
 
 .page-description {
   margin-top: 2px;
-  color: #718096;
+  color: #4a5568;
   font-size: 0.9rem;
 }
 

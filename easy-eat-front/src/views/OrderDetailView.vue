@@ -1,19 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import OrderStatusBadge from '@/components/orders/OrderStatusBadge.vue'
-import { useToast } from '@/composables/useToast'
+import { useAsyncAction } from '@/composables/useAsyncAction'
 import { useOrderStore } from '@/stores/order'
 import type { OrderStatus } from '@/types/order'
-import { getErrorMessage } from '@/utils/error'
 
 type FinalStatus = Extract<OrderStatus, 'completed' | 'cancelled'>
 
 const route = useRoute()
 const router = useRouter()
 const orderStore = useOrderStore()
-const toast = useToast()
-const actionLoading = ref(false)
+const { loading: actionLoading, run: runAction } = useAsyncAction()
 
 const orderId = computed(() => (typeof route.params.id === 'string' ? route.params.id : ''))
 const order = computed(() => orderStore.getOrderById(orderId.value))
@@ -27,41 +26,27 @@ onMounted(() => {
 })
 
 async function initializeView() {
-  try {
-    await orderStore.initialize()
-  } catch (error) {
-    toast.error(getErrorMessage(error, '載入訂單失敗，請稍後再試'))
-  }
+  await runAction(() => orderStore.initialize(), { errorMessage: '載入訂單失敗，請稍後再試' })
 }
 
 async function submitDraft() {
   const currentOrder = order.value
   if (!currentOrder || currentOrder.status !== 'draft') return
 
-  actionLoading.value = true
-  try {
-    await orderStore.submitDraft(currentOrder.id)
-    toast.success('訂單已送出')
-  } catch (error) {
-    toast.error(getErrorMessage(error, '送出訂單失敗'))
-  } finally {
-    actionLoading.value = false
-  }
+  await runAction(() => orderStore.submitDraft(currentOrder.id), {
+    successMessage: '訂單已送出',
+    errorMessage: '送出訂單失敗',
+  })
 }
 
 async function changeStatus(status: FinalStatus) {
   const currentOrder = order.value
   if (!currentOrder || currentOrder.status !== 'pending') return
 
-  actionLoading.value = true
-  try {
-    await orderStore.updateOrderStatus(currentOrder.id, status)
-    toast.success(status === 'completed' ? '訂單已標記完成' : '訂單已取消')
-  } catch (error) {
-    toast.error(getErrorMessage(error, '更新狀態失敗'))
-  } finally {
-    actionLoading.value = false
-  }
+  await runAction(() => orderStore.updateOrderStatus(currentOrder.id, status), {
+    successMessage: status === 'completed' ? '訂單已標記完成' : '訂單已取消',
+    errorMessage: '更新狀態失敗',
+  })
 }
 
 function goBack() {
@@ -77,8 +62,12 @@ function goBack() {
     </div>
 
     <div v-if="orderStore.loading && !orderStore.initialized" class="empty-state">
-      <p>訂單載入中...</p>
+      <LoadingSpinner />
     </div>
+
+    <p v-else-if="orderStore.errorMessage && !orderStore.initialized" role="alert">
+      {{ orderStore.errorMessage }}
+    </p>
 
     <div v-else-if="!order" class="empty-state">
       <p>找不到此訂單</p>

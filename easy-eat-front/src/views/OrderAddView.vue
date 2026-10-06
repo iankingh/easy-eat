@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import OrderForm from '@/components/orders/OrderForm.vue'
-import { useToast } from '@/composables/useToast'
+import { useAsyncAction } from '@/composables/useAsyncAction'
 import { useOrderStore } from '@/stores/order'
 import { useRestaurantStore } from '@/stores/restaurant'
 import type { OrderItem } from '@/types/order'
-import { getErrorMessage } from '@/utils/error'
 
 interface OrderFormPayload {
   restaurantId: string
@@ -16,19 +15,16 @@ interface OrderFormPayload {
 const router = useRouter()
 const restaurantStore = useRestaurantStore()
 const orderStore = useOrderStore()
-const toast = useToast()
-const saving = ref(false)
+const { loading: saving, run: runAction } = useAsyncAction()
 
 onMounted(() => {
   void initializeView()
 })
 
 async function initializeView() {
-  try {
-    await Promise.all([restaurantStore.initialize(), orderStore.initialize()])
-  } catch (error) {
-    toast.error(getErrorMessage(error, '初始化資料失敗，請稍後再試'))
-  }
+  await runAction(() => Promise.all([restaurantStore.initialize(), orderStore.initialize()]), {
+    errorMessage: '初始化資料失敗，請稍後再試',
+  })
 }
 
 async function saveDraft(payload: OrderFormPayload) {
@@ -40,17 +36,18 @@ async function submitOrder(payload: OrderFormPayload) {
 }
 
 async function createOrder(payload: OrderFormPayload, asDraft: boolean) {
-  saving.value = true
-  try {
-    const order = asDraft
-      ? await orderStore.saveDraft(payload.restaurantId, payload.items)
-      : await orderStore.createOrder(payload.restaurantId, payload.items)
-    toast.success(asDraft ? '草稿已儲存' : '訂單已送出')
+  const order = await runAction(
+    () =>
+      asDraft
+        ? orderStore.saveDraft(payload.restaurantId, payload.items)
+        : orderStore.createOrder(payload.restaurantId, payload.items),
+    {
+      successMessage: asDraft ? '草稿已儲存' : '訂單已送出',
+      errorMessage: asDraft ? '儲存草稿失敗' : '建立訂單失敗',
+    },
+  )
+  if (order) {
     await router.push({ name: 'order-detail', params: { id: order.id } })
-  } catch (error) {
-    toast.error(getErrorMessage(error, asDraft ? '儲存草稿失敗' : '建立訂單失敗'))
-  } finally {
-    saving.value = false
   }
 }
 

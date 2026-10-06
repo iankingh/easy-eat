@@ -270,6 +270,7 @@ function submitForm() {
                 <select
                   v-model="item.menuItemId"
                   class="form-select item-select"
+                  :aria-label="`餐點名稱 ${index + 1}`"
                   :class="{ invalid: itemErrors[index]?.menuItemId }"
                   :disabled="loading"
                 >
@@ -294,6 +295,7 @@ function submitForm() {
                   v-model.number="item.quantity"
                   type="number"
                   class="qty-input"
+                  :aria-label="`數量 ${index + 1}`"
                   :class="{ invalid: itemErrors[index]?.quantity }"
                   min="1"
                   max="99"
@@ -310,6 +312,7 @@ function submitForm() {
                   v-model="item.note"
                   type="text"
                   class="note-input"
+                  :aria-label="`備註 ${index + 1}`"
                   maxlength="100"
                   placeholder="備註（可空白）"
                   :disabled="loading"

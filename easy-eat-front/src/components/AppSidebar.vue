@@ -53,11 +53,11 @@ import { RouterLink } from 'vue-router'
 .sidebar a:hover {
   background-color: #e8f0fe;
   border-left-color: #4a90d9;
-  color: #4a90d9;
+  color: #2463a0;
 }
 
 .sidebar a.router-link-active {
-  background-color: #4a90d9;
+  background-color: #2463a0;
   color: #fff;
   border-left-color: #2c6fad;
 }

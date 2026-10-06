@@ -1,19 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import OrderStatusBadge from '@/components/orders/OrderStatusBadge.vue'
 import { ORDER_STATUS_OPTIONS } from '@/constants/order'
-import { useToast } from '@/composables/useToast'
+import { useAsyncAction } from '@/composables/useAsyncAction'
 import { useOrderStore, type OrderSortKey } from '@/stores/order'
 import type { OrderStatus } from '@/types/order'
-import { getErrorMessage } from '@/utils/error'
 
 type FinalStatus = Extract<OrderStatus, 'completed' | 'cancelled'>
 
 const orderStore = useOrderStore()
 const router = useRouter()
-const toast = useToast()
-const actionOrderId = ref('')
+const { loading: actionLoading, run: runAction } = useAsyncAction()
 
 const SORT_OPTIONS: { value: OrderSortKey; label: string }[] = [
   { value: 'createdAt', label: '建立時間' },
@@ -37,11 +36,7 @@ onMounted(() => {
 })
 
 async function initializeView() {
-  try {
-    await orderStore.initialize()
-  } catch (error) {
-    toast.error(getErrorMessage(error, '載入訂單失敗，請稍後再試'))
-  }
+  await runAction(() => orderStore.initialize(), { errorMessage: '載入訂單失敗，請稍後再試' })
 }
 
 function viewDetail(id: string) {
@@ -53,41 +48,25 @@ function editOrder(id: string) {
 }
 
 async function submitDraft(id: string) {
-  actionOrderId.value = id
-  try {
-    await orderStore.submitDraft(id)
-    toast.success('訂單已送出')
-  } catch (error) {
-    toast.error(getErrorMessage(error, '送出訂單失敗'))
-  } finally {
-    actionOrderId.value = ''
-  }
+  await runAction(() => orderStore.submitDraft(id), {
+    successMessage: '訂單已送出',
+    errorMessage: '送出訂單失敗',
+  })
 }
 
 async function deleteOrder(id: string) {
   if (!confirm('確定要刪除此訂單？')) return
-
-  actionOrderId.value = id
-  try {
-    await orderStore.deleteOrder(id)
-    toast.success('訂單已刪除')
-  } catch (error) {
-    toast.error(getErrorMessage(error, '刪除訂單失敗，請稍後再試'))
-  } finally {
-    actionOrderId.value = ''
-  }
+  await runAction(() => orderStore.deleteOrder(id), {
+    successMessage: '訂單已刪除',
+    errorMessage: '刪除訂單失敗，請稍後再試',
+  })
 }
 
 async function changeStatus(id: string, status: FinalStatus) {
-  actionOrderId.value = id
-  try {
-    await orderStore.updateOrderStatus(id, status)
-    toast.success(status === 'completed' ? '訂單已標記完成' : '訂單已取消')
-  } catch (error) {
-    toast.error(getErrorMessage(error, '更新狀態失敗'))
-  } finally {
-    actionOrderId.value = ''
-  }
+  await runAction(() => orderStore.updateOrderStatus(id, status), {
+    successMessage: status === 'completed' ? '訂單已標記完成' : '訂單已取消',
+    errorMessage: '更新狀態失敗',
+  })
 }
 
 function toggleSortDirection() {
@@ -174,8 +153,12 @@ function goToPage(page: number) {
     </p>
 
     <div v-if="orderStore.loading && !orderStore.initialized" class="empty-state">
-      <p>訂單載入中...</p>
+      <LoadingSpinner />
     </div>
+
+    <p v-else-if="orderStore.errorMessage && !orderStore.initialized" role="alert">
+      {{ orderStore.errorMessage }}
+    </p>
 
     <div v-else-if="orderStore.filteredOrders.length === 0" class="empty-state">
       <p>{{ orderStore.orders.length === 0 ? '目前沒有訂單' : '無符合條件的訂單' }}</p>
@@ -221,7 +204,7 @@ function goToPage(page: number) {
                   <button
                     v-if="order.status === 'draft' || order.status === 'pending'"
                     class="btn btn-sm btn-secondary"
-                    :disabled="actionOrderId === order.id"
+                    :disabled="actionLoading"
                     @click="editOrder(order.id)"
                   >
                     編輯
@@ -229,7 +212,7 @@ function goToPage(page: number) {
                   <button
                     v-if="order.status === 'draft'"
                     class="btn btn-sm btn-primary"
-                    :disabled="actionOrderId === order.id"
+                    :disabled="actionLoading"
                     @click="submitDraft(order.id)"
                   >
                     送出
@@ -237,14 +220,14 @@ function goToPage(page: number) {
                   <template v-if="order.status === 'pending'">
                     <button
                       class="btn btn-sm btn-success"
-                      :disabled="actionOrderId === order.id"
+                      :disabled="actionLoading"
                       @click="changeStatus(order.id, 'completed')"
                     >
                       完成
                     </button>
                     <button
                       class="btn btn-sm btn-warning"
-                      :disabled="actionOrderId === order.id"
+                      :disabled="actionLoading"
                       @click="changeStatus(order.id, 'cancelled')"
                     >
                       取消
@@ -252,7 +235,7 @@ function goToPage(page: number) {
                   </template>
                   <button
                     class="btn btn-sm btn-danger"
-                    :disabled="actionOrderId === order.id"
+                    :disabled="actionLoading"
                     @click="deleteOrder(order.id)"
                   >
                     刪除
@@ -336,7 +319,7 @@ function goToPage(page: number) {
 
 .result-count {
   margin-bottom: 8px;
-  color: #777;
+  color: #666;
   font-size: 0.85rem;
 }
 

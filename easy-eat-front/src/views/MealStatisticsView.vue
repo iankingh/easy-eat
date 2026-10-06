@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
+import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import { useToast } from '@/composables/useToast'
 import { useOrderStore } from '@/stores/order'
 import { getErrorMessage } from '@/utils/error'
@@ -30,14 +31,16 @@ async function initializeView() {
 </script>
 
 <template>
-  <section class="page-section">
+  <section class="page-section" :aria-busy="orderStore.loading">
     <div class="section-header">
       <h1>訂單餐點統計表</h1>
     </div>
 
     <div v-if="orderStore.loading && !orderStore.initialized" class="empty-state">
-      <p>統計資料載入中...</p>
+      <LoadingSpinner label="統計資料載入中" />
     </div>
+
+    <p v-else-if="orderStore.errorMessage" role="alert">{{ orderStore.errorMessage }}</p>
 
     <div v-else-if="stats.length === 0" class="empty-state">
       <p>目前沒有已送出訂單的統計資料</p>
