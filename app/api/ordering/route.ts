@@ -28,11 +28,17 @@ function isAdmin(request: Request) {
   return Boolean(secret && request.headers.get("x-admin-code") === secret);
 }
 
-async function ensureRestaurant(database: D1Database, name: string) {
-  await database.prepare("INSERT OR IGNORE INTO restaurants (name) VALUES (?)").bind(name).run();
-  const restaurant = await database.prepare("SELECT id FROM restaurants WHERE name = ?").bind(name).first<{ id: number }>();
-  if (!restaurant) throw new Error("建立店家資料失敗，請再試一次。");
-  return restaurant.id;
+async function menuRestaurantId(database: D1Database, body: Record<string, unknown>) {
+  if (body.restaurantId !== undefined) {
+    const id = Number(body.restaurantId);
+    if (!Number.isInteger(id) || id < 1) return null;
+    const restaurant = await database.prepare("SELECT id FROM restaurants WHERE id = ?").bind(id).first<{ id: number }>();
+    return restaurant?.id ?? null;
+  }
+  // Existing clients may still send a group ID; the menu remains restaurant-owned.
+  const roundId = Number(body.roundId);
+  if (!Number.isInteger(roundId) || roundId < 1) return null;
+  return (await database.prepare("SELECT restaurant_id AS restaurantId FROM order_rounds WHERE id = ?").bind(roundId).first<{ restaurantId: number | null }>())?.restaurantId ?? null;
 }
 
 async function ensureStarterData(database: D1Database) {
@@ -98,6 +104,15 @@ async function getSnapshot(database: D1Database, request: Request, includeOrders
 export async function GET(request: Request) {
   try {
     const database = db();
+    if (new URL(request.url).searchParams.get("view") === "restaurants") {
+      if (!isAdmin(request)) return Response.json({ error: "請先登入點餐後台，再管理餐廳與菜單。" }, { status: 401 });
+      const restaurants = (await database.prepare("SELECT r.id, r.name, COUNT(m.id) AS menuCount FROM restaurants r LEFT JOIN restaurant_menu_items m ON m.restaurant_id = r.id AND m.active = 1 GROUP BY r.id ORDER BY r.name").all<{ id: number; name: string; menuCount: number }>()).results;
+      const requested = new URL(request.url).searchParams.get("restaurantId");
+      const restaurant = requested ? restaurants.find(item => item.id === Number(requested)) : restaurants[0] ?? null;
+      if (requested && !restaurant) return Response.json({ error: "找不到這家餐廳，請從餐廳列表重新選擇。" }, { status: 404 });
+      const menu = restaurant ? (await database.prepare("SELECT id, name, description, price FROM restaurant_menu_items WHERE restaurant_id = ? AND active = 1 ORDER BY id").bind(restaurant.id).all()).results : [];
+      return Response.json({ restaurants, restaurant, menu }, { headers: { "cache-control": "no-store" } });
+    }
     if (new URL(request.url).searchParams.get("view") === "list") {
       const result = await database.prepare("SELECT id, title, order_date AS orderDate, closes_at AS closesAt FROM order_rounds WHERE status = 'open' AND restaurant_id IS NOT NULL ORDER BY order_date, closes_at, id").all<{ id: number; title: string; orderDate: string; closesAt: string }>();
       return Response.json({ rounds: result.results.filter(round => Date.parse(round.closesAt) > Date.now()) }, { headers: { "cache-control": "no-store" } });
@@ -124,8 +139,22 @@ export async function POST(request: Request) {
     }
     if (action !== "place-order" && !isAdmin(request)) return Response.json({ error: "管理驗證未通過。請重新輸入管理碼並登入後台，再執行此操作。" }, { status: 401 });
 
+    if (action === "create-restaurant") {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (!name || name.length > 100) return Response.json({ error: "請輸入 1～100 個字的餐廳名稱，例如自訂的健康餐、飲料店或麵店。" }, { status: 400 });
+      const created = await database.prepare("INSERT INTO restaurants (name) VALUES (?) ON CONFLICT(name) DO NOTHING RETURNING id").bind(name).first<{ id: number }>();
+      if (!created) return Response.json({ error: `「${name}」已存在，請從餐廳列表選擇它來管理菜單。` }, { status: 409 });
+      return Response.json({ ok: true, restaurantId: created.id });
+    }
     if (action === "create-round") {
-      const title = typeof body.title === "string" ? body.title.trim().slice(0, 100) : "";
+      const selectedId = Number(body.restaurantId);
+      const selectedName = typeof body.title === "string" ? body.title.trim() : "";
+      const restaurant = body.restaurantId !== undefined
+        ? Number.isInteger(selectedId) && selectedId > 0 ? await database.prepare("SELECT id, name FROM restaurants WHERE id = ?").bind(selectedId).first<{ id: number; name: string }>() : null
+        : await database.prepare("SELECT id, name FROM restaurants WHERE name = ?").bind(selectedName).first<{ id: number; name: string }>();
+      if (!restaurant) return Response.json({ error: "請選擇已建立的餐廳；自訂餐廳請先到「餐廳／菜單管理」新增。", field: "restaurantId" }, { status: 400 });
+      const title = restaurant.name;
+      const restaurantId = restaurant.id;
       const orderDate = typeof body.orderDate === "string" ? body.orderDate : "";
       const deadline = typeof body.deadline === "string" ? body.deadline : "";
       if (!title) return Response.json({ error: "店家名稱尚未填寫。請選擇一家店，或輸入店家名稱。", field: "title" }, { status: 400 });
@@ -135,7 +164,6 @@ export async function POST(request: Request) {
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(deadline)) return Response.json({ error: "截止時間不正確。請輸入 00:00～23:59 的時間，例如 13:30。", field: "deadline" }, { status: 400 });
       const closesAt = `${orderDate}T${deadline}:00+08:00`;
       if (!Number.isFinite(Date.parse(closesAt))) return Response.json({ error: "請填寫有效的日期與截止時間。" }, { status: 400 });
-      const restaurantId = await ensureRestaurant(database, title);
       const reusable = await database.prepare("SELECT r.id FROM order_rounds r WHERE r.order_date = ? AND r.title = '尚未設定今日團購' AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.round_id = r.id) AND NOT EXISTS (SELECT 1 FROM menu_items m WHERE m.round_id = r.id) ORDER BY r.id DESC LIMIT 1").bind(orderDate).first<{ id: number }>();
       if (reusable) {
         await database.prepare("UPDATE order_rounds SET title = ?, restaurant_id = ?, closes_at = ?, status = 'closed' WHERE id = ?").bind(title, restaurantId, closesAt, reusable.id).run();
@@ -239,17 +267,21 @@ export async function POST(request: Request) {
       if (openAfterSave && round.title !== title) return Response.json({ error: "店家已修改但尚未儲存。請先按「儲存店家與時間」，確認新店家的餐點後，再開放點餐。" }, { status: 409 });
       if (openAfterSave) {
         const count = await database.prepare("SELECT COUNT(*) AS count FROM restaurant_menu_items m LEFT JOIN round_menu_availability a ON a.menu_item_id = m.id AND a.round_id = ? WHERE m.restaurant_id = ? AND m.active = 1 AND COALESCE(a.available, 1) = 1").bind(roundId, round.restaurantId).first<{ count: number }>();
-        if (!count?.count) return Response.json({ error: `「${round.title}」沒有供應中的餐點。請在「設定餐點」新增餐點，或將售完餐點改為供應中，再開放點餐。` }, { status: 409 });
+        if (!count?.count) return Response.json({ error: `「${round.title}」沒有供應中的餐點。請到「餐廳／菜單管理」新增餐點，或將本團售完餐點改為供應中，再開放點餐。` }, { status: 409 });
       }
       if (round.title !== title) {
         const orderCount = await database.prepare("SELECT COUNT(*) AS count FROM orders WHERE round_id = ?").bind(roundId).first<{ count: number }>();
         if (orderCount?.count) return Response.json({ error: "這團已有訂單，無法更換店家；請建立新團以保留訂單紀錄。" }, { status: 409 });
-        const restaurantId = await ensureRestaurant(database, title);
+        const restaurant = await database.prepare("SELECT id FROM restaurants WHERE name = ?").bind(title).first<{ id: number }>();
+        if (!restaurant) return Response.json({ error: "請先到「餐廳／菜單管理」新增這家餐廳，再回來選擇。" }, { status: 400 });
+        const restaurantId = restaurant.id;
         await database.prepare("UPDATE order_rounds SET title = ?, restaurant_id = ?, closes_at = ? WHERE id = ?").bind(title, restaurantId, closesAt, roundId).run();
         return Response.json({ ok: true });
       }
       if (round.restaurantId === null) {
-        const restaurantId = await ensureRestaurant(database, title);
+        const restaurant = await database.prepare("SELECT id FROM restaurants WHERE name = ?").bind(title).first<{ id: number }>();
+        if (!restaurant) return Response.json({ error: "請先到「餐廳／菜單管理」新增這家餐廳，再回來選擇。" }, { status: 400 });
+        const restaurantId = restaurant.id;
         await database.prepare("UPDATE order_rounds SET restaurant_id = ?, closes_at = ? WHERE id = ?").bind(restaurantId, closesAt, roundId).run();
       } else {
         await database.prepare("UPDATE order_rounds SET title = ?, closes_at = ?, status = CASE WHEN ? = 1 THEN 'open' ELSE status END WHERE id = ?").bind(title, closesAt, openAfterSave ? 1 : 0, roundId).run();
@@ -262,11 +294,9 @@ export async function POST(request: Request) {
       const price = Number(body.price);
       if (!name) return Response.json({ error: "餐點名稱尚未填寫。請輸入名稱後再新增。" }, { status: 400 });
       if (!Number.isInteger(price) || price < 1 || price > 10000) return Response.json({ error: "餐點價格不正確。請輸入 1～10,000 元的整數金額。" }, { status: 400 });
-      const roundId = Number(body.roundId);
-      const round = Number.isInteger(roundId) ? await database.prepare("SELECT id, restaurant_id AS restaurantId FROM order_rounds WHERE id = ?").bind(roundId).first<{ id: number; restaurantId: number | null }>() : null;
-      if (!round) return Response.json({ error: "找不到這張團購訂單。請重新整理頁面，再從「所有團次」選擇訂單。" }, { status: 404 });
-      if (round.restaurantId === null) return Response.json({ error: "請先設定這團的店家。" }, { status: 409 });
-      await database.prepare("INSERT INTO restaurant_menu_items (restaurant_id, name, description, price, active) VALUES (?, ?, ?, ?, 1)").bind(round.restaurantId, name, description, price).run();
+      const restaurantId = await menuRestaurantId(database, body);
+      if (!restaurantId) return Response.json({ error: "找不到這家餐廳。請重新選擇餐廳後再新增餐點。" }, { status: 404 });
+      await database.prepare("INSERT INTO restaurant_menu_items (restaurant_id, name, description, price, active) VALUES (?, ?, ?, ?, 1)").bind(restaurantId, name, description, price).run();
       return Response.json({ ok: true });
     }
     if (action === "update-menu-item") {
@@ -275,10 +305,10 @@ export async function POST(request: Request) {
       const price = Number(body.price);
       if (!name) return Response.json({ error: "餐點名稱尚未填寫。請輸入名稱後再儲存。" }, { status: 400 });
       if (!Number.isInteger(price) || price < 1 || price > 10000) return Response.json({ error: "餐點價格不正確。請輸入 1～10,000 元的整數金額。" }, { status: 400 });
-      const roundId = Number(body.roundId);
+      const restaurantId = await menuRestaurantId(database, body);
       const itemId = Number(body.menuItemId);
-      if (!Number.isInteger(roundId) || !Number.isInteger(itemId)) return Response.json({ error: "餐點資料不正確。請重新整理菜單後再編輯。" }, { status: 400 });
-      const item = await database.prepare("SELECT m.id FROM restaurant_menu_items m JOIN order_rounds r ON r.restaurant_id = m.restaurant_id WHERE r.id = ? AND m.id = ? AND m.active = 1").bind(roundId, itemId).first<{ id: number }>();
+      if (!restaurantId || !Number.isInteger(itemId)) return Response.json({ error: "請選擇有效的餐廳與餐點後再編輯。" }, { status: 400 });
+      const item = await database.prepare("SELECT id FROM restaurant_menu_items WHERE restaurant_id = ? AND id = ? AND active = 1").bind(restaurantId, itemId).first<{ id: number }>();
       if (!item) return Response.json({ error: "這項餐點不屬於所選店家，或已被移除。請重新整理菜單後再編輯。" }, { status: 404 });
       await database.prepare("UPDATE restaurant_menu_items SET name = ?, description = ?, price = ? WHERE id = ? AND active = 1").bind(name, description, price, itemId).run();
       return Response.json({ ok: true });
@@ -295,14 +325,12 @@ export async function POST(request: Request) {
       return Response.json({ ok: true });
     }
     if (action === "remove-menu-item") {
-      const roundId = Number(body.roundId);
-      const round = Number.isInteger(roundId) ? await database.prepare("SELECT id, restaurant_id AS restaurantId FROM order_rounds WHERE id = ?").bind(roundId).first<{ id: number; restaurantId: number | null }>() : null;
-      if (!round) return Response.json({ error: "找不到這張團購訂單。請重新整理頁面，再從「所有團次」選擇訂單。" }, { status: 404 });
-      if (round.restaurantId === null) return Response.json({ error: "請先設定這團的店家。" }, { status: 409 });
+      const restaurantId = await menuRestaurantId(database, body);
+      if (!restaurantId) return Response.json({ error: "找不到這家餐廳。請重新選擇餐廳後再移除餐點。" }, { status: 404 });
       const itemId = Number(body.menuItemId);
-      const item = await database.prepare("SELECT id FROM restaurant_menu_items WHERE id = ? AND restaurant_id = ? AND active = 1").bind(itemId, round.restaurantId).first<{ id: number }>();
-      if (!item) return Response.json({ error: "找不到這項餐點。" }, { status: 404 });
-      await database.prepare("UPDATE restaurant_menu_items SET active = 0 WHERE id = ? AND restaurant_id = ?").bind(itemId, round.restaurantId).run();
+      const item = await database.prepare("SELECT id FROM restaurant_menu_items WHERE id = ? AND restaurant_id = ? AND active = 1").bind(itemId, restaurantId).first<{ id: number }>();
+      if (!item) return Response.json({ error: "找不到這家餐廳的餐點。請重新整理菜單後再試。" }, { status: 404 });
+      await database.prepare("UPDATE restaurant_menu_items SET active = 0 WHERE id = ? AND restaurant_id = ?").bind(itemId, restaurantId).run();
       return Response.json({ ok: true });
     }
     if (action === "toggle-round") {
