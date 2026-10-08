@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "午餐團訂｜同事點餐",
-  description: "同事午餐每日團訂與訂單管理。",
+  title: "點餐系統",
+  description: "同事點餐、店家菜單與訂單管理。",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

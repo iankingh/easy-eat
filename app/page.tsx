@@ -327,9 +327,9 @@ export default function Home() {
       <div inert={Boolean(busyLabel || loading || message)} aria-busy={Boolean(busyLabel || loading)}>
       <header className="border-b border-[#e1e6eb] bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-5 px-5 py-4 sm:px-8">
-          <a href="#main" className="flex items-center gap-3" aria-label="同事午餐團訂首頁">
-            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#163d35] text-xl text-white" aria-hidden="true">午</span>
-            <span><span className="block text-base font-bold tracking-tight">午餐團訂</span><span className="block text-sm text-[#65727e]">今天吃什麼，一起決定</span></span>
+          <a href="#main" className="flex items-center gap-3" aria-label="點餐系統首頁">
+            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#163d35] text-xl text-white" aria-hidden="true">點</span>
+            <span><span className="block text-base font-bold tracking-tight">點餐系統</span><span className="block text-sm text-[#65727e]">今天吃什麼，一起決定</span></span>
           </a>
           <nav className="flex rounded-xl bg-[#f1f4f5] p-1" aria-label="主要功能">
             <button className={`rounded-lg px-4 py-2 text-sm font-semibold ${tab === "order" ? "bg-white text-[#163d35] shadow-sm" : "text-[#65727e]"}`} onClick={() => setTab("order")}>我要點餐</button>
@@ -343,7 +343,7 @@ export default function Home() {
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
               <p className="mb-2 text-sm font-bold tracking-wide text-[#a65c36]">{tab === "order" ? "DAILY LUNCH" : "ORDER CONTROL"}</p>
-              <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{tab === "order" ? (data?.round.title || "團購點餐") : "團購管理"}</h1>
+              <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{tab === "order" ? (data?.round.title || "點餐系統") : "團購管理"}</h1>
               <p className="mt-2 text-base text-[#65727e]">{tab === "order" ? "選好餐點、留下姓名與帳號，送出就完成。" : "建立團次、查看不同訂單，並管理各團點餐連結。"}</p>
             </div>
             <button onClick={() => void refresh()} className="rounded-xl border border-[#d9e0e4] bg-white px-4 py-2.5 text-sm font-semibold text-[#40505c] hover:bg-[#f8fafb]">重新整理</button>
