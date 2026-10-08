@@ -40,7 +40,7 @@ async function readApiResponse(response: Response) {
 
 export default function Home() {
   const [data, setData] = useState<Data | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const busyRef = useRef(false);
   const refreshIssueRef = useRef("");
   const feedbackButtonRef = useRef<HTMLButtonElement>(null);
@@ -60,7 +60,8 @@ export default function Home() {
     if (value) refreshIssueRef.current = "";
   }, []);
   const showError = useCallback((value: string) => { setMessageValue(value); setMessageIsError(true); }, []);
-  const [tab, setTab] = useState<"order" | "admin">("order");
+  const [tab, setTab] = useState<"home" | "list" | "order" | "admin">("home");
+  const [openRounds, setOpenRounds] = useState<Pick<Round, "id" | "title" | "orderDate" | "closesAt">[]>([]);
   const [adminCode, setAdminCode] = useState("");
   const [adminReady, setAdminReady] = useState(false);
   const [quantities, setQuantities] = useState<Record<number, number>>({});
@@ -83,13 +84,17 @@ export default function Home() {
 
   const refresh = useCallback(async () => {
     const requestVersion = ++loadVersionRef.current;
+    if (tab === "home") { setLoading(false); return; }
     setLoading(true);
     refreshIssueRef.current = "";
     try {
-      const query = selectedRoundId ? `?roundId=${encodeURIComponent(selectedRoundId)}` : "";
+      const query = tab === "list" ? "?view=list" : selectedRoundId ? `?roundId=${encodeURIComponent(selectedRoundId)}` : "";
       const response = await fetch(`/api/ordering${query}`, { cache: "no-store", signal: AbortSignal.timeout(20000), headers: readAdminCode ? { "x-admin-code": readAdminCode } : {} });
-      const snapshot = await readApiResponse(response) as Data;
-      if (requestVersion === loadVersionRef.current) setData(snapshot);
+      const snapshot = await readApiResponse(response);
+      if (requestVersion === loadVersionRef.current) {
+        if (tab === "list") setOpenRounds((snapshot as unknown as { rounds: typeof openRounds }).rounds);
+        else setData(snapshot as Data);
+      }
     } catch (error) {
       if (requestVersion !== loadVersionRef.current) return;
       const reason = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "讀取資料逾時。請確認網路後按「重新整理」。" : error instanceof TypeError ? "無法連線到點餐系統。請確認網路連線，再按重新整理。" : error instanceof Error ? error.message : "點餐資料讀取失敗。請重新整理後再試。";
@@ -98,8 +103,9 @@ export default function Home() {
     } finally {
       if (requestVersion === loadVersionRef.current) setLoading(false);
     }
-  }, [readAdminCode, selectedRoundId, showError]);
+  }, [readAdminCode, selectedRoundId, showError, tab]);
 
+  useEffect(() => { if (new URLSearchParams(window.location.search).has("round")) setTab("order"); }, []);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
     if (!data) return;
@@ -204,6 +210,18 @@ export default function Home() {
     } catch (error) { showError(error instanceof Error ? error.message : "開放點餐失敗，請確認截止時間與菜單。"); }
   }
 
+  function navigateEntry(destination: "home" | "list" | "admin") {
+    setTab(destination);
+    setMessage("");
+    setQuantities({});
+    if (destination !== "admin") {
+      setSelectedRoundId("");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("round");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }
+
   function selectRound(roundId: number | string) {
     const id = String(roundId);
     setSelectedRoundId(id);
@@ -270,7 +288,7 @@ export default function Home() {
   useEffect(() => {
     type ToolContext = { registerTool: (tool: { name: string; title: string; description: string; inputSchema: object; annotations?: { readOnlyHint?: boolean; untrustedContentHint?: boolean }; execute: (input: unknown) => unknown | Promise<unknown> }, options?: { signal?: AbortSignal }) => void | Promise<void> };
     const context = (document as Document & { modelContext?: ToolContext }).modelContext;
-    if (!context?.registerTool) return;
+    if (!context?.registerTool || tab !== "order") return;
     const lifecycle = new AbortController();
     const reportError = (error: unknown) => console.error("點餐工具註冊失敗", error);
     void Promise.resolve(context.registerTool({
@@ -306,7 +324,7 @@ export default function Home() {
       },
     }, { signal: lifecycle.signal })).catch(reportError);
     return () => lifecycle.abort();
-  }, [refresh, selectedRoundId]);
+  }, [refresh, selectedRoundId, tab]);
 
   const totalOrders = data?.orderCount ?? 0;
   const orderTotal = data?.orderTotal ?? 0;
@@ -321,37 +339,48 @@ export default function Home() {
     return () => { document.body.style.overflow = previousOverflow; document.removeEventListener("keydown", dismiss); };
   }, [busyLabel, loading, message, setMessage]);
 
+  if (tab === "home") return (
+    <main className="flex min-h-screen items-center justify-center bg-[#f4f6f8] px-5">
+      <div className="grid w-full max-w-lg gap-5 sm:grid-cols-2">
+        <button type="button" onClick={() => navigateEntry("list")} className="min-h-36 rounded-2xl bg-[#163d35] px-8 py-10 text-2xl font-bold text-white shadow-sm hover:bg-[#21574b]">我要點餐</button>
+        <button type="button" onClick={() => navigateEntry("admin")} className="min-h-36 rounded-2xl border border-[#d9e0e4] bg-white px-8 py-10 text-2xl font-bold text-[#163d35] shadow-sm hover:bg-[#e8efec]">點餐後台</button>
+      </div>
+    </main>
+  );
+
   return (
     <main className="min-h-screen bg-[#f4f6f8] text-[#18202b]">
       <datalist id="restaurant-list">{restaurantChoices.map(store => <option key={store} value={store} />)}</datalist>
       <div inert={Boolean(busyLabel || loading || message)} aria-busy={Boolean(busyLabel || loading)}>
       <header className="border-b border-[#e1e6eb] bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-5 px-5 py-4 sm:px-8">
-          <a href="#main" className="flex items-center gap-3" aria-label="點餐系統首頁">
+          <a href="/" onClick={event => { event.preventDefault(); navigateEntry("home"); }} className="flex items-center gap-3" aria-label="點餐系統首頁">
             <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#163d35] text-xl text-white" aria-hidden="true">點</span>
             <span><span className="block text-base font-bold tracking-tight">點餐系統</span><span className="block text-sm text-[#65727e]">今天吃什麼，一起決定</span></span>
           </a>
           <nav className="flex rounded-xl bg-[#f1f4f5] p-1" aria-label="主要功能">
-            <button className={`rounded-lg px-4 py-2 text-sm font-semibold ${tab === "order" ? "bg-white text-[#163d35] shadow-sm" : "text-[#65727e]"}`} onClick={() => setTab("order")}>我要點餐</button>
-            <button className={`rounded-lg px-4 py-2 text-sm font-semibold ${tab === "admin" ? "bg-white text-[#163d35] shadow-sm" : "text-[#65727e]"}`} onClick={() => setTab("admin")}>管理後台</button>
+            <button className={`rounded-lg px-4 py-2 text-sm font-semibold ${tab === "order" || tab === "list" ? "bg-white text-[#163d35] shadow-sm" : "text-[#65727e]"}`} onClick={() => navigateEntry("list")}>我要點餐</button>
+            <button className={`rounded-lg px-4 py-2 text-sm font-semibold ${tab === "admin" ? "bg-white text-[#163d35] shadow-sm" : "text-[#65727e]"}`} onClick={() => navigateEntry("admin")}>點餐後台</button>
           </nav>
         </div>
       </header>
 
-      <div id="main" className="mx-auto grid max-w-6xl gap-7 px-5 py-7 sm:px-8 lg:grid-cols-[minmax(0,1fr)_310px] lg:py-10">
+      <div id="main" className={`mx-auto grid max-w-6xl gap-7 px-5 py-7 sm:px-8 lg:py-10 ${tab === "list" ? "" : "lg:grid-cols-[minmax(0,1fr)_310px]"}`}>
         <section className="min-w-0">
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
             <div>
-              <p className="mb-2 text-sm font-bold tracking-wide text-[#a65c36]">{tab === "order" ? "DAILY LUNCH" : "ORDER CONTROL"}</p>
-              <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{tab === "order" ? (data?.round.title || "點餐系統") : "團購管理"}</h1>
-              <p className="mt-2 text-base text-[#65727e]">{tab === "order" ? "選好餐點、留下姓名與帳號，送出就完成。" : "建立團次、查看不同訂單，並管理各團點餐連結。"}</p>
+              <p className="mb-2 text-sm font-bold tracking-wide text-[#a65c36]">{tab === "admin" ? "ORDER CONTROL" : "ORDER LIST"}</p>
+              <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">{tab === "list" ? "可點餐的訂單" : tab === "order" ? (data?.round.title || "點餐系統") : "點餐後台"}</h1>
+              <p className="mt-2 text-base text-[#65727e]">{tab === "list" ? "選擇一張已開放的訂單，進入店家菜單點餐。" : tab === "order" ? "選好餐點、留下姓名與帳號，送出就完成。" : "建立團次、查看不同訂單，並管理各團點餐連結。"}</p>
             </div>
             <button onClick={() => void refresh()} className="rounded-xl border border-[#d9e0e4] bg-white px-4 py-2.5 text-sm font-semibold text-[#40505c] hover:bg-[#f8fafb]">重新整理</button>
           </div>
 
           {message && <div role={messageIsError ? "alert" : "status"} className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${messageIsError ? "border-red-200 bg-red-50 text-red-800" : "border-[#c7ded3] bg-[#edf7f1] text-[#245c45]"}`}>{message}</div>}
           {loading && !data && <div className="rounded-2xl border border-[#e1e6eb] bg-white p-8 text-[#65727e]">載入點餐資料中…</div>}
-          {data && (tab === "order" ? (
+          {tab === "order" && <button type="button" onClick={() => navigateEntry("list")} className="mb-5 rounded-xl border border-[#d9e0e4] bg-white px-4 py-2.5 text-sm font-semibold">返回訂單列表</button>}
+          {tab === "list" && !loading && (openRounds.length ? <div className="grid gap-4 sm:grid-cols-2">{openRounds.map(round => <article key={round.id} className="rounded-2xl border border-[#e1e6eb] bg-white p-6"><div className="flex items-start justify-between gap-3"><h2 className="text-xl font-bold">{round.title}</h2><span className="shrink-0 rounded-full bg-[#e8f4ed] px-3 py-1 text-sm font-semibold text-[#286148]">開放中</span></div><p className="mt-3 text-sm text-[#65727e]">訂單 #{round.id} · {round.orderDate}</p><p className="mt-2 text-base">截止：{new Date(round.closesAt).toLocaleString("zh-TW", { timeZone: "Asia/Taipei", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}</p><button type="button" onClick={() => { setData(null); selectRound(round.id); setTab("order"); }} className="mt-5 w-full rounded-xl bg-[#163d35] px-5 py-3 font-bold text-white hover:bg-[#21574b]">進入點餐</button></article>)}</div> : <div className="rounded-2xl border border-[#e1e6eb] bg-white p-8"><h2 className="text-lg font-bold">目前沒有開放點餐的訂單</h2><p className="mt-2 text-[#65727e]">管理者開放後會顯示在這裡，請稍後重新整理。</p></div>)}
+          {tab !== "list" && data && (tab === "order" ? (
             <form noValidate onSubmit={submitOrder} className="space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-[#163d35] p-5 text-white sm:p-6">
                 <div><p className="text-sm font-medium text-white/70">{data.round.title}</p><p className="mt-1 text-lg font-bold">{data.round.status === "open" ? "開放點餐中" : "本團已截止"}</p></div>
@@ -443,10 +472,10 @@ export default function Home() {
           ))}
         </section>
 
-        <aside className="space-y-4 lg:pt-[76px]">
+        {tab !== "list" && <aside className="space-y-4 lg:pt-[76px]">
           <section className="rounded-2xl border border-[#e1e6eb] bg-white p-5"><p className="text-sm font-semibold text-[#65727e]">本團點餐狀況</p><div className="mt-4 grid grid-cols-2 gap-3"><div className="rounded-xl bg-[#f4f6f8] p-3"><p className="text-sm text-[#65727e]">訂購人數</p><p className="mt-1 text-2xl font-bold">{totalOrders}<span className="ml-1 text-sm font-medium">人</span></p></div><div className="rounded-xl bg-[#f4f6f8] p-3"><p className="text-sm text-[#65727e]">訂單總額</p><p className="mt-1 text-xl font-bold">{money(orderTotal)}</p></div></div><div className="mt-4 flex items-center justify-between border-t border-[#edf0f2] pt-4 text-sm"><span className="text-[#65727e]">團購狀態</span><span className={`font-bold ${data?.round.status === "open" ? "text-[#286148]" : "text-[#934c29]"}`}>● {data?.round.status === "open" ? "開放中" : "已截止"}</span></div></section>
           <section className="rounded-2xl bg-[#e8efec] p-5"><p className="font-bold text-[#254b41]">點餐小提醒</p><p className="mt-2 text-sm leading-6 text-[#526b63]">送出前請確認姓名、帳號與餐點。若要修改已送出的內容，請聯絡團購管理者。</p></section>
-        </aside>
+        </aside>}
       </div>
       </div>
       {(busyLabel || loading) && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-5 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="操作處理中">

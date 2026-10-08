@@ -96,7 +96,14 @@ async function getSnapshot(database: D1Database, request: Request, includeOrders
 }
 
 export async function GET(request: Request) {
-  try { return await getSnapshot(db(), request, isAdmin(request)); }
+  try {
+    const database = db();
+    if (new URL(request.url).searchParams.get("view") === "list") {
+      const result = await database.prepare("SELECT id, title, order_date AS orderDate, closes_at AS closesAt FROM order_rounds WHERE status = 'open' AND restaurant_id IS NOT NULL ORDER BY order_date, closes_at, id").all<{ id: number; title: string; orderDate: string; closesAt: string }>();
+      return Response.json({ rounds: result.results.filter(round => Date.parse(round.closesAt) > Date.now()) }, { headers: { "cache-control": "no-store" } });
+    }
+    return await getSnapshot(database, request, isAdmin(request));
+  }
   catch (error) {
     if (error instanceof Error && ["團購連結不正確。", "找不到這個團購，請確認點餐連結。", "資料庫目前無法使用，請稍後再試。"].includes(error.message)) return Response.json({ error: error.message }, { status: 503 });
     const errorId = crypto.randomUUID().slice(0, 8);
