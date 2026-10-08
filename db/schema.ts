@@ -59,3 +59,11 @@ export const orderItems = sqliteTable("order_items", {
   quantity: integer("quantity").notNull(),
   unitPrice: integer("unit_price").notNull(),
 }, (table) => [index("idx_order_items_order_id").on(table.orderId)]);
+
+// A completed request is recorded with its payload so retries cannot create another order.
+export const orderRequests = sqliteTable("order_requests", {
+  id: text("id").primaryKey(),
+  fingerprint: text("fingerprint").notNull(),
+  orderId: text("order_id").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});

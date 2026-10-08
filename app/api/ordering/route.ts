@@ -71,10 +71,10 @@ async function getSnapshot(database: D1Database, request: Request, includeOrders
   if (expiredIds.length) await database.batch(expiredIds.map(id => database.prepare("UPDATE order_rounds SET status = 'closed' WHERE id = ?").bind(id)));
   if (round.status === "open" && Date.now() >= Date.parse(round.closesAt)) round.status = "closed";
   const menu = round.restaurantId === null ? { results: [] as MenuRow[] } : await database.prepare("SELECT m.id, m.name, m.description, m.price, COALESCE(a.available, 1) AS available FROM restaurant_menu_items m LEFT JOIN round_menu_availability a ON a.menu_item_id = m.id AND a.round_id = ? WHERE m.restaurant_id = ? AND m.active = 1 ORDER BY m.id").bind(round.id, round.restaurantId).all<MenuRow>();
-  const summary = await database.prepare("SELECT COUNT(DISTINCT o.account) AS count, COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS total FROM orders o LEFT JOIN order_items oi ON oi.order_id = o.id WHERE o.round_id = ?").bind(round.id).first<{ count: number; total: number }>();
-  let rounds: (RoundRow & { orderCount: number; orderTotal: number })[] = [];
+  const summary = await database.prepare("SELECT COUNT(DISTINCT o.account) AS count, COUNT(DISTINCT o.id) AS orderCount, COALESCE(SUM(oi.quantity), 0) AS mealCount, COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS total FROM orders o LEFT JOIN order_items oi ON oi.order_id = o.id WHERE o.round_id = ?").bind(round.id).first<{ count: number; orderCount: number; mealCount: number; total: number }>();
+  let rounds: (RoundRow & { orderCount: number; personCount: number; mealCount: number; orderTotal: number })[] = [];
   if (includeOrders) {
-    const result = await database.prepare("SELECT r.id, r.title, r.restaurant_id AS restaurantId, r.order_date AS orderDate, r.closes_at AS closesAt, r.status, COUNT(DISTINCT o.account) AS orderCount, COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS orderTotal FROM order_rounds r LEFT JOIN orders o ON o.round_id = r.id LEFT JOIN order_items oi ON oi.order_id = o.id GROUP BY r.id ORDER BY r.order_date DESC, r.id DESC LIMIT 100").all<RoundRow & { orderCount: number; orderTotal: number }>();
+    const result = await database.prepare("SELECT r.id, r.title, r.restaurant_id AS restaurantId, r.order_date AS orderDate, r.closes_at AS closesAt, r.status, COUNT(DISTINCT o.id) AS orderCount, COUNT(DISTINCT o.account) AS personCount, COALESCE(SUM(oi.quantity), 0) AS mealCount, COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS orderTotal FROM order_rounds r LEFT JOIN orders o ON o.round_id = r.id LEFT JOIN order_items oi ON oi.order_id = o.id GROUP BY r.id ORDER BY r.order_date DESC, r.id DESC LIMIT 100").all<RoundRow & { orderCount: number; personCount: number; mealCount: number; orderTotal: number }>();
     rounds = result.results.map(item => ({ ...item, status: item.status === "open" && Date.now() >= Date.parse(item.closesAt) ? "closed" : item.status }));
   }
   let restaurants: { id: number; name: string; menuCount: number }[] = [];
@@ -92,7 +92,7 @@ async function getSnapshot(database: D1Database, request: Request, includeOrders
     }
     orders = [...byId.values()];
   }
-  return Response.json({ round, menu: menu.results, orderCount: summary?.count ?? 0, orderTotal: summary?.total ?? 0, orders, rounds, restaurants }, { headers: { "cache-control": "no-store" } });
+  return Response.json({ round, menu: menu.results, personCount: summary?.count ?? 0, orderCount: summary?.orderCount ?? 0, mealCount: summary?.mealCount ?? 0, orderTotal: summary?.total ?? 0, orders, rounds, restaurants }, { headers: { "cache-control": "no-store" } });
 }
 
 export async function GET(request: Request) {
@@ -157,32 +157,71 @@ export async function POST(request: Request) {
       if (items.length > 30) return Response.json({ error: "一張訂單最多可選擇 30 種餐點。請減少餐點種類後再送出。" }, { status: 400 });
       const roundId = Number(body.roundId);
       if (!Number.isInteger(roundId) || roundId < 1) return Response.json({ error: "點餐連結不正確。" }, { status: 400 });
+      const requestId = typeof body.requestId === "string" ? body.requestId : crypto.randomUUID();
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return Response.json({ error: "送出識別碼不正確。請重新整理後再試。" }, { status: 400 });
+      const mode = body.mode === "append" || body.mode === "replace" ? body.mode : "new";
+      const replaceOrderId = mode === "replace" && typeof body.replaceOrderId === "string" ? body.replaceOrderId : "";
+      const fingerprint = JSON.stringify({ roundId, name, account, note, items, mode, replaceOrderId });
+      const completed = await database.prepare("SELECT fingerprint, order_id AS orderId FROM order_requests WHERE id = ?").bind(requestId).first<{ fingerprint: string; orderId: string }>();
+      if (completed) return completed.fingerprint === fingerprint ? Response.json({ ok: true, orderId: completed.orderId, replayed: true }) : Response.json({ error: "這次送出的內容與原操作不同。請重新整理並確認訂單後再送出。" }, { status: 409 });
+      if (mode === "replace") {
+        // The unguessable order ID is a receipt held only by its submitting browser and admins.
+        const own = await database.prepare("SELECT id FROM orders WHERE id = ? AND round_id = ? AND account = ?").bind(replaceOrderId, roundId, account).first();
+        if (!own) return Response.json({ error: "無法驗證這筆訂單的修改權限。請使用原本點餐的瀏覽器，或聯絡管理者。" }, { status: 403 });
+      } else if (mode === "new") {
+        const existing = await database.prepare("SELECT id FROM orders WHERE round_id = ? AND account = ? LIMIT 1").bind(roundId, account).first();
+        if (existing) {
+          const replay = await database.prepare("SELECT fingerprint, order_id AS orderId FROM order_requests WHERE id = ?").bind(requestId).first<{ fingerprint: string; orderId: string }>();
+          if (replay?.fingerprint === fingerprint) return Response.json({ ok: true, orderId: replay.orderId, replayed: true });
+          return Response.json({ error: "這個帳號已在本團下單。若要額外訂購，請選擇「追加這份訂單」；若要修改，請使用本機訂單的修改按鈕，或聯絡管理者。", code: "duplicate-order" }, { status: 409 });
+        }
+      }
       const round = await database.prepare("SELECT id, restaurant_id AS restaurantId, status, closes_at AS closesAt FROM order_rounds WHERE id = ?").bind(roundId).first<{ id: number; restaurantId: number | null; status: "open" | "closed"; closesAt: string }>();
       if (!round) return Response.json({ error: "找不到這張團購訂單。請向管理者索取正確的點餐連結。" }, { status: 404 });
       if (Date.now() >= Date.parse(round.closesAt)) return Response.json({ error: `這團已於 ${displayTime(round.closesAt)} 截止，無法送出訂單。請聯絡管理者調整截止時間。` }, { status: 409 });
       if (round.status !== "open") return Response.json({ error: "這團目前關閉中。請聯絡管理者開放點餐後再送出。" }, { status: 409 });
       if (round.restaurantId === null) return Response.json({ error: "這團尚未指定店家。請聯絡管理者先設定店家與菜單。" }, { status: 409 });
       const normalized: { item: MenuRow; quantity: number }[] = [];
+      const seenItems = new Set<number>();
       for (const line of items) {
         const id = Number(line.menuItemId); const quantity = Number(line.quantity);
-        if (!Number.isInteger(id) || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) return Response.json({ error: "餐點數量不正確。" }, { status: 400 });
+        if (!Number.isInteger(id) || !Number.isInteger(quantity) || quantity < 1 || quantity > 20 || seenItems.has(id)) return Response.json({ error: "每項餐點限 1～20 份，且同一餐點不能重複列入。請調整數量後再送出。" }, { status: 400 });
+        seenItems.add(id);
         const item = await database.prepare("SELECT m.id, m.name, m.description, m.price, COALESCE(a.available, 1) AS available FROM restaurant_menu_items m LEFT JOIN round_menu_availability a ON a.menu_item_id = m.id AND a.round_id = ? WHERE m.id = ? AND m.restaurant_id = ? AND m.active = 1").bind(round.id, id, round.restaurantId).first<MenuRow>();
         if (!item) return Response.json({ error: "所選餐點已從這家店的菜單移除。請重新整理頁面並重新選餐。" }, { status: 409 });
         if (!item.available) return Response.json({ error: `「${item.name}」已售完。請將此餐點數量設為 0，或重新整理後改選其他餐點。` }, { status: 409 });
         normalized.push({ item, quantity });
       }
-      const orderId = crypto.randomUUID();
+      const orderId = mode === "replace" ? replaceOrderId : crypto.randomUUID();
       const snapshots: { item: MenuRow; quantity: number; snapshotId: number }[] = [];
       for (const { item, quantity } of normalized) {
         const snapshot = await database.prepare("INSERT INTO menu_items (round_id, name, description, price, available) VALUES (?, ?, ?, ?, 1) RETURNING id").bind(round.id, item.name, item.description, item.price).first<{ id: number }>();
         if (!snapshot) throw new Error("保存餐點快照失敗，請再試一次。");
         snapshots.push({ item, quantity, snapshotId: snapshot.id });
       }
-      await database.batch([
-        database.prepare("INSERT INTO orders (id, round_id, employee_name, account, note, status) VALUES (?, ?, ?, ?, ?, 'new')").bind(orderId, round.id, name, account, note),
-        ...snapshots.map(({ item, quantity, snapshotId }) => database.prepare("INSERT INTO order_items (order_id, menu_item_id, item_name, quantity, unit_price) VALUES (?, ?, ?, ?, ?)").bind(orderId, snapshotId, item.name, quantity, item.price)),
-      ]);
-      return Response.json({ ok: true });
+      const statements: D1PreparedStatement[] = mode === "replace" ? [
+        database.prepare("UPDATE orders SET employee_name = ?, note = ?, status = 'new' WHERE id = ? AND round_id = ? AND account = ?").bind(name, note, orderId, round.id, account),
+        database.prepare("DELETE FROM order_items WHERE order_id = ?").bind(orderId),
+      ] : [
+        database.prepare("INSERT INTO orders (id, round_id, employee_name, account, note, status) SELECT ?, ?, ?, ?, ?, 'new' WHERE ? = 'append' OR NOT EXISTS (SELECT 1 FROM orders WHERE round_id = ? AND account = ?)").bind(orderId, round.id, name, account, note, mode, round.id, account),
+      ];
+      statements.push(
+        ...snapshots.map(({ item, quantity, snapshotId }) => database.prepare("INSERT INTO order_items (order_id, menu_item_id, item_name, quantity, unit_price) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM orders WHERE id = ?)").bind(orderId, snapshotId, item.name, quantity, item.price, orderId)),
+        database.prepare("INSERT INTO order_requests (id, fingerprint, order_id) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM orders WHERE id = ?)").bind(requestId, fingerprint, orderId, orderId),
+      );
+      try { await database.batch(statements); }
+      catch (error) {
+        const replay = await database.prepare("SELECT fingerprint, order_id AS orderId FROM order_requests WHERE id = ?").bind(requestId).first<{ fingerprint: string; orderId: string }>();
+        if (replay?.fingerprint === fingerprint) return Response.json({ ok: true, orderId: replay.orderId, replayed: true });
+        throw error;
+      }
+      const saved = await database.prepare("SELECT id FROM orders WHERE id = ?").bind(orderId).first();
+      if (!saved) {
+        const replay = await database.prepare("SELECT fingerprint, order_id AS orderId FROM order_requests WHERE id = ?").bind(requestId).first<{ fingerprint: string; orderId: string }>();
+        if (replay?.fingerprint === fingerprint) return Response.json({ ok: true, orderId: replay.orderId, replayed: true });
+        return Response.json({ error: "這個帳號剛剛已送出訂單。請確認既有訂單，或明確選擇追加。", code: "duplicate-order" }, { status: 409 });
+      }
+      return Response.json({ ok: true, orderId });
     }
     if (action === "update-round") {
       const title = typeof body.title === "string" ? body.title.trim().slice(0, 100) : "";
