@@ -4,7 +4,7 @@ Easy Eat 的 Vue 3 + TypeScript 單頁應用程式。現階段由 Mock API 與 `
 
 ## 環境需求
 
-- Node.js `^20.19.0`、`^22.13.0` 或 `>=24`
+- Node.js `24.22.1` LTS（從儲存庫根目錄執行 `nvm use`）、npm `11.20.0`
 - npm
 
 ## 快速開始
