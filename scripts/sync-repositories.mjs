@@ -89,6 +89,14 @@ async function main() {
           "http.extraHeader=",
           "-c",
           "http.followRedirects=false",
+          "-c",
+          "http.version=HTTP/1.1",
+          "-c",
+          "http.postBuffer=134217728",
+          "-c",
+          "http.lowSpeedLimit=1024",
+          "-c",
+          "http.lowSpeedTime=60",
         ]
       : [];
     if (remote && credential.auth_mode === "http_extra_header") {
@@ -102,8 +110,14 @@ async function main() {
       env,
       encoding: "utf8",
       maxBuffer: 8 * 1024 * 1024,
+      timeout: 180000,
     });
-    if (result.error) throw new Error("無法執行 Git。");
+    if (result.error)
+      throw new Error(
+        result.error.code === "ETIMEDOUT"
+          ? "Git 連線逾時，請核對遠端狀態後重試；未強制覆蓋歷史。"
+          : "無法執行 Git。",
+      );
     if (result.status !== 0 && !allowFailure)
       throw new Error(scrub(result.stderr || "Git 操作未完成。"));
     return { ok: result.status === 0, output: result.stdout.trim() };
@@ -125,12 +139,14 @@ async function main() {
   ]).output;
   if (rewritten !== credential.remote_url)
     throw new Error("Sites remote URL 被 Git 設定改寫，已停止同步。");
+  process.stderr.write("正在讀取 GitHub 最新提交…\n");
   git([
     "fetch",
     "--no-tags",
     "origin",
     `+refs/heads/${link.branch}:refs/remotes/origin/${link.branch}`,
   ]);
+  process.stderr.write("正在讀取 Sites 最新提交…\n");
   git(
     [
       "fetch",
@@ -172,7 +188,9 @@ async function main() {
   if (plan.fastForward)
     throw new Error("遠端有較新提交，請先執行 sync:pull，再檢查與測試。");
   // Each push uses Git's normal fast-forward check. Never force-push either repository.
+  process.stderr.write("正在同步 GitHub…\n");
   git(["push", "origin", `HEAD:refs/heads/${link.branch}`]);
+  process.stderr.write("正在同步 Sites（首次包含既有 Git 歷史）…\n");
   try {
     git(
       ["push", credential.remote_url, `HEAD:refs/heads/${link.branch}`],
