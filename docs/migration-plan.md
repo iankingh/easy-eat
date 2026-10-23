@@ -10,7 +10,7 @@
 - 匯入原始提交：`f3979706fdd3c7a3e4caa244c8b9d8cd054def45`
 - `worker/ordering.ts` 原封不動取自該提交的 `app/api/ordering/route.ts`。
 - `drizzle/`、`db/`、D1 綁定沿用原始檔，既有 SQL 遷移不可修改。
-- 原 Site Git 歷史將合入 Easy Eat，保留原始 React 前端以供版本還原。
+- 原 Site Git 歷史已合入 Easy Eat，保留原始 React 前端以供版本還原。
 
 ## 驗收範圍
 

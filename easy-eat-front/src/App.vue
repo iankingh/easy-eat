@@ -233,6 +233,7 @@ watch([tab, roundId, adminReady, section], () => {
 async function run(body: Record<string, unknown>, success: string) {
   if (busy.value) return null
   busy.value = true
+  message.value = ''
   try {
     const result = await api<{ roundId?: number }>('', body, adminCode.value)
     try {
@@ -253,6 +254,7 @@ async function run(body: Record<string, unknown>, success: string) {
 async function login() {
   if (busy.value) return
   busy.value = true
+  message.value = ''
   try {
     await api('', { action: 'admin-check' }, adminCode.value)
     adminReady.value = true
@@ -303,6 +305,7 @@ async function submitOrder() {
   if (pending?.fingerprint !== fingerprint)
     pending = { fingerprint, requestId: crypto.randomUUID() }
   busy.value = true
+  message.value = ''
   try {
     const result = await api<{ orderId: string }>('', { ...payload, requestId: pending.requestId })
     const saved: Receipt = {
@@ -362,6 +365,10 @@ function roundLink(id: number) {
 }
 function changeSection(value: 'orders' | 'restaurants', store = '') {
   navigate('admin', roundId.value, value, store)
+}
+function setBusy(value: boolean) {
+  busy.value = value
+  if (value) message.value = ''
 }
 function logout() {
   adminReady.value = false
@@ -521,7 +528,7 @@ onUnmounted(() => {
           @select="(id) => changeSection('restaurants', id)"
           @success="feedback"
           @error="showError"
-          @busy="(value) => (busy = value)"
+          @busy="setBusy"
         />
         <form v-if="tab === 'order' && data" class="stack" @submit.prevent="submitOrder">
           <button type="button" class="back" @click="navigate('list')">返回訂單列表</button>
