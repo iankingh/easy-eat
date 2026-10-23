@@ -2,7 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createLocalD1 } from "../scripts/local-d1.mjs";
-import { syncPlan } from "../scripts/sync-repositories.mjs";
+import {
+  assertContentSyncSafe,
+  importSitesSnapshot,
+} from "../scripts/sync-repositories.mjs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import worker from "../dist/server/index.js";
 const tomorrow = () =>
   new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Taipei" }).format(
@@ -254,24 +261,48 @@ test("Worker serves built Vue assets and refuses unknown APIs and unsupported me
     405,
   );
 });
-test("bidirectional sync accepts either remote advancing and blocks conflicting histories", () => {
-  const ancestor = (a, b) =>
-    a === b || ({ a: ["b", "c"], b: ["c"], c: [] }[a] || []).includes(b);
-  assert.deepEqual(syncPlan("a", "b", "a", ancestor), {
-    target: "b",
-    fastForward: true,
-    publishable: false,
+test("content sync imports independent Site history and preserves concurrent changes", (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "easy-eat-sync-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const git = (args, remote = false, allowFailure = false, input) => ({
+    ok: true,
+    output: execFileSync("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      input,
+    }).trim(),
   });
-  assert.deepEqual(syncPlan("a", "a", "b", ancestor), {
-    target: "b",
-    fastForward: true,
-    publishable: false,
-  });
-  assert.deepEqual(syncPlan("c", "a", "b", ancestor), {
-    target: "c",
-    fastForward: false,
-    publishable: true,
-  });
-  assert.throws(() => syncPlan("a", "b", "fork", ancestor), /分歧/);
-  assert.throws(() => syncPlan("fork", "a", "b", ancestor), /分歧/);
+  git(["init", "-q"]);
+  git(["config", "user.name", "Sync Test"]);
+  git(["config", "user.email", "sync@example.invalid"]);
+  writeFileSync(path.join(root, "menu.txt"), "original menu\n");
+  git(["add", "."]);
+  git(["commit", "-qm", "GitHub original"]);
+  const github = git(["rev-parse", "HEAD"]).output,
+    base = git(["rev-parse", "HEAD^{tree}"]).output;
+  const siteRoot = git(
+    ["commit-tree", base],
+    false,
+    false,
+    "Independent Site history\n",
+  ).output;
+  writeFileSync(path.join(root, "menu.txt"), "edited in Sites\n");
+  git(["add", "."]);
+  const siteTree = git(["write-tree"]).output,
+    site = git(
+      ["commit-tree", siteTree, "-p", siteRoot],
+      false,
+      false,
+      "Edit from Sites\n",
+    ).output;
+  const imported = importSitesSnapshot(git, github, site);
+  assert.equal(git(["show", `${imported}:menu.txt`]).output, "edited in Sites");
+  assert.equal(git(["rev-parse", `${imported}^{tree}`]).output, siteTree);
+  assert.equal(git(["show", `${github}:menu.txt`]).output, "original menu");
+  assertContentSyncSafe(siteTree, siteTree, base);
+  assertContentSyncSafe(siteTree, base, base);
+  assert.throws(
+    () => assertContentSyncSafe("other-github-tree", siteTree, base),
+    /不同修改/,
+  );
 });

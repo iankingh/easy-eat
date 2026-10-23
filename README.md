@@ -2,7 +2,7 @@
 
 以目前公開的 [同事午餐團訂](https://team-lunch-orders.ianaa10716.chatgpt.site) 第 18 版為功能、資料與操作流程基準。前端改為 **Vue 3**，正式後端維持 **Cloudflare Workers + D1**。
 
-GitHub 與 Sites 連接的是同一份程式碼及 Git 歷史。這次同步原始碼，尚未發布新的 Vue 版；目前公開網站仍可使用。
+GitHub 與 Sites 連接的是同一份程式碼，並各自保留 Git 歷史。這次同步原始碼，尚未發布新的 Vue 版；目前公開網站仍可使用。
 
 ## 專案結構
 
@@ -56,8 +56,8 @@ cp .env.example .env
 
 1. 確認已提交本機修改，在 `main` 分支操作。
 2. 透過 Sites 原生 `create_source_repository_write_credential`，對 `.openai/hosting.json` 中的同一個 project ID 取得短效 Git 憑證。不得將 token 存檔、寫入 Git、放進指令參數或日誌。
-3. 執行 `npm run sync:status` 或 `npm run sync:pull`，在隱藏的 stdin 提示傳入原生回應 JSON。指令取回 GitHub 與 Sites 最新提交，僅允許快轉；分歧時停止，先人工合併與測試。
-4. 修改、建置、測試並提交後，執行 `npm run sync:push`，同樣經 stdin 傳入有效憑證。指令推送到 GitHub 與 Sites，並核對兩端 commit SHA 完全一致。
+3. 執行 `npm run sync:status` 或 `npm run sync:pull`，在隱藏的 stdin 提示傳入原生回應 JSON。指令取回 GitHub 與 Sites 最新提交；Sites 單邊修改可匯入 GitHub，兩端同時有不同內容時停止，先人工合併與測試。
+4. 修改、建置、測試並提交後，執行 `npm run sync:push`，同樣經 stdin 傳入有效憑證。指令推送到 GitHub 與 Sites，並核對兩端 Git tree SHA（完整原始碼內容）完全一致。
 5. 若某一端推送失敗，指令會報告尚未同步完成。保留本機提交，重新取得憑證／取回遠端狀態後重試，不可 force-push。
 
 無背景排程，也沒有永久憑證；從這裡更新網站時，依 `AGENTS.md` 完成同步。若直接在外部 GitHub 編輯，回到這裡後先 `sync:pull`，再測試及同步另一端。**Vue 3 與雙向同步是兩項獨立設定，不會自動將 React／Java 等不同實作互相轉換。**
@@ -66,6 +66,8 @@ cp .env.example .env
 
 原網址、公開權限、D1 綁定與 `LUNCH_ADMIN_CODE` 都沿用現有 Site。`npm run build` 產生自包含的 `dist/server/index.js`，將 Vue 靜態資產與既有 API 包在同一個 Worker，沒有額外主機。
 
-發布前必須先核對並同步兩個原始碼庫。使用 Sites source workflow 包裝已驗證的 `dist/`，再使用原生 `save_site_version`／`deploy_site_version`；保留 project ID、D1 綁定、既有不可變的 SQL 遷移。不要把 `dist`、本機資料庫、測試資料、管理碼或憑證提交到 GitHub。部署不是 `git push` 的自動效果。
+發布前必須先核對並同步兩個原始碼庫。先用 Sites source workflow 開啟獨立的 Sites checkout（不要直接在 GitHub checkout 套用 Sites Git 歷史），在該 checkout 安裝前端依賴、建置，再包裝已驗證的 `dist/`，再使用原生 `save_site_version`／`deploy_site_version`；保留 project ID、D1 綁定、既有不可變的 SQL 遷移。不要把 `dist`、本機資料庫、測試資料、管理碼或憑證提交到 GitHub。部署不是 `git push` 的自動效果。
 
 詳見 [遷移記錄](docs/migration-plan.md) 與 [API 契約](API.md)。
+
+首次同步以內容快照連接 Sites，避免把舊 Easy Eat 的約 63 MB 歷史重新上傳。GitHub 保留完整歷史；Sites 保留既有歷史及每次同步快照，commit 的 `GitHub-Commit` 記錄對應版本。兩端以 tree SHA 驗證所有檔案完全相同。
