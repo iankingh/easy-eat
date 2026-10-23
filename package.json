@@ -1,0 +1,18 @@
+{
+  "name": "easy-eat",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.22.1"
+  },
+  "scripts": {
+    "build": "npm --prefix easy-eat-front run build && node scripts/build-worker.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "dev": "node scripts/local-server.mjs",
+    "preview": "node scripts/local-server.mjs",
+    "sync:status": "node scripts/sync-repositories.mjs status",
+    "sync:pull": "node scripts/sync-repositories.mjs pull",
+    "sync:push": "node scripts/sync-repositories.mjs push"
+  }
+}

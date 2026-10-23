@@ -1,6 +1,6 @@
 {
   "name": "easy-eat-front",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "vite",
@@ -8,9 +8,7 @@
     "preview": "vite preview",
     "build-only": "vite build",
     "type-check": "vue-tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
+    "test": "npm --prefix .. test",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "type-check:e2e": "tsc --noEmit -p tsconfig.e2e.json",
@@ -21,9 +19,7 @@
     "check": "npm run type-check && npm run lint && npm run format:check"
   },
   "dependencies": {
-    "pinia": "^4.1.0",
-    "vue": "^3.5.44",
-    "vue-router": "^5.4.0"
+    "vue": "^3.5.44"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",

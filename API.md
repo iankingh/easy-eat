@@ -1,183 +1,38 @@
-# Easy Eat Mock API
+# 同事午餐團訂 API
 
-> 目前沒有獨立 HTTP 伺服器；`easy-eat-front/src/api/` 直接呼叫 [`mock/server.ts`](easy-eat-front/src/mock/server.ts) 的非同步函式。下列路徑是未來後端 API 的對應介面，現行資料則持久化於 `localStorage`。
+正式後端為 Cloudflare Workers，資料庫為 D1。路徑沿用第 18 版 `/api/ordering`，前端同源呼叫。
 
-## 資料模型
+## GET
 
-### 訂單
+| 查詢                                  | 用途                     |
+| ------------------------------------- | ------------------------ |
+| 無參數                                | 當天團次、菜單及匿名統計 |
+| `?roundId=<id>`                       | 指定團次、菜單及匿名統計 |
+| `?view=list`                          | 未截止且開放中的團次     |
+| `?view=restaurants&restaurantId=<id>` | 管理員餐廳列表與共用菜單 |
 
-```ts
-type OrderStatus = "draft" | "pending" | "completed" | "cancelled";
-type EditableOrderStatus = "draft" | "pending";
+傳入有效 `x-admin-code` 時，一般 snapshot 另外包含 `orders`、`rounds`、`restaurants`；未驗證訪客這三個欄位為空陣列。個別訂單、姓名與帳號不對外提供。
 
-interface Order {
-  id: string;
-  orderId: string;
-  restaurantId: string;
-  restaurantName: string;
-  items: OrderItem[];
-  totalAmount: number;
-  status: OrderStatus;
-  createdAt: string; // ISO 8601
-}
+## POST
 
-interface OrderItem {
-  menuItemId: string;
-  name: string;
-  price: number;
-  quantity: number;
-  note: string;
-}
+JSON body 內的 `action` 指定操作。除 `place-order` 外，皆需 `x-admin-code`。
 
-interface CreateOrderInput {
-  restaurantId: string;
-  items: Array<{
-    menuItemId: string;
-    quantity: number;
-    note: string;
-  }>;
-}
+| action              | 主要欄位                                                                                  |
+| ------------------- | ----------------------------------------------------------------------------------------- |
+| `admin-check`       | 無；驗證管理碼                                                                            |
+| `create-restaurant` | `name`                                                                                    |
+| `add-menu-item`     | `restaurantId`, `name`, `description`, `price`                                            |
+| `update-menu-item`  | `restaurantId`, `menuItemId`, `name`, `description`, `price`                              |
+| `remove-menu-item`  | `restaurantId`, `menuItemId`；軟刪除                                                      |
+| `create-round`      | `restaurantId` 或已存在的餐廳 `title`, `orderDate`, `deadline`                            |
+| `update-round`      | `roundId`, `title`, `deadline`, 可選 `openAfterSave`                                      |
+| `toggle-round`      | `roundId`                                                                                 |
+| `toggle-menu-item`  | `roundId`, `menuItemId`；僅改本團供應狀態                                                 |
+| `toggle-order`      | `orderId`                                                                                 |
+| `place-order`       | `roundId`, `name`, `account`, `note`, `items`, `requestId`, 可選 `mode`, `replaceOrderId` |
 
-type UpdateOrderInput = CreateOrderInput;
+`items` 格式為 `[{menuItemId,quantity}]`，每張最多 30 種，每項 1～20 份。價格由後端讀取，不接受前端指定。餐點名稱／單價在訂單內保留快照，改菜單不修改歷史訂單。
 
-interface UpdateOrderStatusInput {
-  status: OrderStatus;
-}
+`requestId` 使用 UUID v4。同一 request ID 與相同內容重試回傳原訂單；內容改變會拒絕。`mode` 為 `new`、`append`、`replace`。`new` 遇到同團相同帳號回傳 `409` 與 `code=duplicate-order`；`replace` 需該瀏覽器保存的不可猜測 order ID 及相符帳號。
 
-interface MealStatistic {
-  name: string;
-  price: number;
-  quantity: number;
-  total: number;
-}
-```
-
-狀態轉換：
-
-```text
-draft ──送出──> pending ──> completed
-                         └─> cancelled
-```
-
-- `draft` 與 `pending` 可修改餐廳及餐點內容。
-- 只有 `draft` 可透過送出操作轉為 `pending`。
-- 只有 `pending` 可轉為 `completed` 或 `cancelled`。
-- 草稿會與其他訂單一樣寫入 `localStorage`，重新整理後仍保留。
-
-### 餐廳、餐點與分類
-
-```ts
-interface Restaurant {
-  id: string;
-  name: string;
-  enabled: boolean;
-  menuItems: MenuItem[];
-}
-
-interface MenuItem {
-  id: string;
-  name: string;
-  price: number;
-  categoryId: string;
-  enabled: boolean;
-}
-
-interface MenuCategory {
-  id: string;
-  name: string;
-  enabled: boolean;
-}
-```
-
-餐點以 `categoryId` 關聯 `MenuCategory`，不再儲存自由文字 `category`。建立或更新訂單時，餐廳、餐點及其分類皆須為啟用狀態。
-
-## 訂單介面
-
-| Method   | Path                      | Mock 函式                           | 說明                                             |
-| -------- | ------------------------- | ----------------------------------- | ------------------------------------------------ |
-| `GET`    | `/api/orders`             | `listOrders()`                      | 依建立時間由新到舊取得訂單                       |
-| `GET`    | `/api/orders/{id}`        | `getOrderById(id)`                  | 取得單筆訂單，不存在時回傳 `null`                |
-| `POST`   | `/api/orders`             | `createOrder(payload, status)`      | 建立 `draft` 或 `pending` 訂單；預設為 `pending` |
-| `PUT`    | `/api/orders/{id}`        | `updateOrder(id, payload)`          | 更新 `draft` 或 `pending` 的內容與總額           |
-| `POST`   | `/api/orders/{id}/submit` | `submitOrder(id)`                   | 重新驗證內容並將草稿送出為 `pending`             |
-| `PATCH`  | `/api/orders/{id}/status` | `updateOrderStatus(id, { status })` | 依允許的狀態流程更新                             |
-| `DELETE` | `/api/orders/{id}`        | `deleteOrder(id)`                   | 刪除訂單；ID 不存在時不變更資料                  |
-| `GET`    | `/api/orders/statistics`  | `listMealStatistics()`              | 取得餐點數量與金額統計                           |
-
-新增與更新訂單使用 `CreateOrderInput`／`UpdateOrderInput`。餐點不可重複、數量須為大於 `0` 的整數，且至少須有一項餐點。統計包含 `pending` 與 `completed`，排除 `draft` 與 `cancelled`。
-
-## 餐廳介面
-
-| Method   | Path                            | Mock 函式                           | 說明               |
-| -------- | ------------------------------- | ----------------------------------- | ------------------ |
-| `GET`    | `/api/restaurants`              | `listRestaurants()`                 | 取得所有餐廳及菜單 |
-| `POST`   | `/api/restaurants`              | `createRestaurant(payload)`         | 新增餐廳，預設啟用 |
-| `PUT`    | `/api/restaurants/{id}`         | `updateRestaurant(id, payload)`     | 修改餐廳名稱       |
-| `PATCH`  | `/api/restaurants/{id}/enabled` | `setRestaurantEnabled(id, enabled)` | 啟用或停用餐廳     |
-| `DELETE` | `/api/restaurants/{id}`         | `deleteRestaurant(id)`              | 刪除餐廳           |
-
-```ts
-interface RestaurantInput {
-  name: string;
-}
-```
-
-若餐廳仍有 `draft` 或 `pending` 訂單，刪除會被拒絕。
-
-## 餐點介面
-
-| Method   | Path                                           | Mock 函式                                           | 說明                 |
-| -------- | ---------------------------------------------- | --------------------------------------------------- | -------------------- |
-| `POST`   | `/api/restaurants/{id}/items`                  | `createMenuItem(restaurantId, payload)`             | 新增餐點，預設啟用   |
-| `PUT`    | `/api/restaurants/{id}/items/{itemId}`         | `updateMenuItem(restaurantId, itemId, payload)`     | 修改名稱、價格與分類 |
-| `PATCH`  | `/api/restaurants/{id}/items/{itemId}/enabled` | `setMenuItemEnabled(restaurantId, itemId, enabled)` | 啟用或停用餐點       |
-| `DELETE` | `/api/restaurants/{id}/items/{itemId}`         | `deleteMenuItem(restaurantId, itemId)`              | 刪除餐點             |
-
-```ts
-interface MenuItemInput {
-  name: string;
-  price: number;
-  categoryId: string;
-}
-```
-
-價格須為大於 `0` 的整數，且 `categoryId` 必須存在。若餐點仍被 `draft` 或 `pending` 訂單使用，刪除會被拒絕。
-
-## 分類介面
-
-| Method   | Path                           | Mock 函式                         | 說明               |
-| -------- | ------------------------------ | --------------------------------- | ------------------ |
-| `GET`    | `/api/categories`              | `listCategories()`                | 取得所有分類       |
-| `POST`   | `/api/categories`              | `createCategory(payload)`         | 新增分類，預設啟用 |
-| `PUT`    | `/api/categories/{id}`         | `updateCategory(id, payload)`     | 修改分類名稱       |
-| `PATCH`  | `/api/categories/{id}/enabled` | `setCategoryEnabled(id, enabled)` | 啟用或停用分類     |
-| `DELETE` | `/api/categories/{id}`         | `deleteCategory(id)`              | 刪除分類           |
-
-```ts
-interface MenuCategoryInput {
-  name: string;
-}
-```
-
-分類名稱不可為空或重複。只要仍有任何餐點使用該分類，刪除就會被拒絕。
-
-## Mock 儲存與遷移
-
-- 儲存鍵：`easy-eat-mock-db-v1`
-- 現行 schema：`version: 2`
-- `readDatabase()` 讀取後會正規化並回寫資料；無資料或 JSON 損毀時才重建預設資料。
-- 舊資料中的餐廳、餐點、訂單與流水號會盡量保留。
-- 舊餐點的 `category` 字串會對應既有分類，必要時建立分類，再轉存為 `categoryId`。
-- 舊資料缺少 `enabled` 時視為 `true`；未知訂單狀態會正規化為 `pending`。
-
-重置介面：
-
-| Method | Path              | Mock 函式               | 說明                               |
-| ------ | ----------------- | ----------------------- | ---------------------------------- |
-| `POST` | `/api/mock/reset` | `resetMockServerData()` | 清空訂單並還原預設分類、餐廳及餐點 |
-
-## 相關文件
-
-- [專案入口](README.md)
-- [前端開發說明](easy-eat-front/README.md)
-- [外部參考來源](docs/REFERENCES.md)
+錯誤格式為 `{error, code?, field?, errorId?}`。未驗證為 401、修改權限不符為 403、資料不存在為 404、日期／供應狀態／重複下單衝突為 409。此遷移保留現有第 18 版後端行為，未擅自變更 D1 schema 或商業規則。

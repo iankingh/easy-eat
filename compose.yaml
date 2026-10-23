@@ -1,0 +1,23 @@
+services:
+  lunch:
+    build: .
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      LUNCH_ADMIN_CODE: ${LUNCH_ADMIN_CODE:?請先在 .env 設定管理碼}
+    volumes:
+      - lunch-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8787/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  lunch-data:

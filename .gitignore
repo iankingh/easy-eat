@@ -25,3 +25,11 @@
 *~
 .spectra/
 openspec/.vector-search.db*
+
+# Generated Worker output, local database and preview state
+/dist/
+/.local-data/
+/.sites-runtime/
+/node_modules/
+*.sqlite*
+*.db

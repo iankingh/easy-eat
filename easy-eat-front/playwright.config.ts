@@ -1,22 +1,27 @@
 import { defineConfig, devices } from '@playwright/test'
-
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 export default defineConfig({
   testDir: './e2e',
-  fullyParallel: true,
+  fullyParallel: false,
+  workers: 1,
   forbidOnly: Boolean(process.env.CI),
   retries: 0,
-  reporter: [['list'], ['html', { open: 'never' }]],
+  reporter: 'list',
   use: {
-    baseURL: 'http://127.0.0.1:4173',
-    launchOptions: { executablePath: process.env.CHROME_BIN },
+    baseURL: 'http://127.0.0.1:8789',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
-    video: 'retain-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --port 4173 --strictPort',
-    url: 'http://127.0.0.1:4173',
-    reuseExistingServer: !process.env.CI,
+    command: 'node ../scripts/local-server.mjs',
+    url: 'http://127.0.0.1:8789',
+    reuseExistingServer: false,
+    env: {
+      LUNCH_ADMIN_CODE: 'e2e-only-admin',
+      PORT: '8789',
+      LOCAL_DB_PATH: path.join(tmpdir(), `easy-eat-e2e-${process.pid}.sqlite`),
+    },
   },
 })

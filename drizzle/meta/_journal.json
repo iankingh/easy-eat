@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1790902717755,
+      "tag": "0000_deep_zarda",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1790904764420,
+      "tag": "0001_large_arachne",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790909488656,
+      "tag": "0002_warm_wendell_rand",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791443982192,
+      "tag": "0003_dazzling_sentinel",
+      "breakpoints": true
+    }
+  ]
+}

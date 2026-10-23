@@ -1,80 +1,71 @@
-# Easy Eat 訂餐系統
+# 點餐系統｜同事午餐團訂（Easy Eat）
 
-Easy Eat 是以 Vue 3 與 TypeScript 開發的單頁訂餐管理系統。目前採純前端架構，透過非同步 Mock API 與 `localStorage` 模擬後端資料持久化，提供訂單、餐點統計及餐廳／餐點後台管理功能。
+以目前公開的 [同事午餐團訂](https://team-lunch-orders.ianaa10716.chatgpt.site) 第 18 版為功能、資料與操作流程基準。前端改為 **Vue 3**，正式後端維持 **Cloudflare Workers + D1**。
 
-## 技術棧
+GitHub 與 Sites 連接的是同一份程式碼及 Git 歷史。這次同步原始碼，尚未發布新的 Vue 版；目前公開網站仍可使用。
 
-- Vue `3.5.x`、Vue Router `4.6.x`、Pinia `3.0.x`
-- TypeScript `6.0.x`、Vite `8.0.x`
-- Vitest、Vue Test Utils、ESLint、Prettier
+## 專案結構
 
-## 環境需求
+- `easy-eat-front/`：Vue 3／TypeScript／Vite 前端。
+- `worker/ordering.ts`：線上第 18 版 API 原始碼，保持原有邏輯與 `/api/ordering` 契約。
+- `drizzle/`、`db/`：原 D1 遷移檔及 schema，既有遷移不可修改。
+- `.openai/hosting.json`：原 Sites ID、D1 `DB` 綁定，不建立新的 Site 或資料庫。
+- `.openai/repository-link.json`：GitHub、Sites 原始碼庫及線上網址對應。
+- `scripts/sync-repositories.mjs`：雙向同步與衝突保護。
+- `scripts/local-server.mjs`：本機／Docker 預覽，以 SQLite 實作 D1 介面，與正式 D1 隔離。
 
-- Node.js `^20.19.0`、`^22.13.0` 或 `>=24`
-- npm
+舊 Easy Eat Mock 系統已被取代；舊版本可從 Git 歷史還原。`openspec/` 是舊系統的歷史規格，不能作為這版產品的需求來源；本版以原公開網站、`API.md` 及目前程式為準。
 
-## 專案架構
+## 功能
 
-```text
-easy-eat/
-├── easy-eat-front/
-│   └── src/
-│       ├── api/          # API 介面層
-│       ├── components/   # 共用 Vue 元件
-│       ├── composables/  # Composition API 工具
-│       ├── constants/    # 狀態標籤、轉換規則與分頁設定
-│       ├── mock/         # localStorage Mock server
-│       ├── router/       # Vue Router 設定
-│       ├── services/     # 業務服務層
-│       ├── stores/       # Pinia 狀態管理
-│       ├── types/        # TypeScript 型別
-│       ├── utils/        # 共用工具
-│       └── views/        # 路由頁面
-├── docs/                 # 專案文件
-└── API.md                # API 規格
+- 首頁分為「我要點餐」、「點餐後台」，可列出開放團次及分享各團點餐連結。
+- 餐廳與共用菜單獨立管理，支援新增、編輯與移除餐點；開團直接沿用菜單。
+- 各團管理餐廳、日期、截止時間、開放／關閉與本團售完狀態；已有訂單禁止換店。
+- 同事填寫姓名、帳號、餐點與備註；支援重複送單保護、明確追加及此瀏覽器上一筆訂單修改。
+- 訂單保留送出當時餐點名稱與價格；後台可確認訂單、複製含備註的店家出餐彙總及列印。
+- 公開 API 隱藏同事個別訂單與帳號。管理碼保留於本次頁面記憶體，不寫進 Git 或瀏覽器儲存。
+- 保留 `read_lunch_menu` 與 `submit_lunch_order` WebMCP 工具。
+
+## 安裝、建置與本機預覽
+
+使用 Node.js 24.22.1 以上（前端工具鏈固定於 Node 24）。
+
+```sh
+npm --prefix easy-eat-front ci
+npm run build
+npm test
 ```
 
-資料流為 `View → Store → Service → API → Mock Server → localStorage`；未來串接後端時，可由 API 層替換實作。
+將 `.env.example` 複製為 `.env` 並修改管理碼。終端啟動預覽前，從 `.env` 載入 `LUNCH_ADMIN_CODE` 至程序環境，再執行 `npm run dev`。預覽網址是 `http://127.0.0.1:8787`。若沒有設定管理碼，後台保持停用。
 
-## 開發指令
+本機 SQLite 預設放在 `.local-data/lunch.sqlite`，重啟仍會保存；它不是正式 D1 的備份。修改 Vue 時可另外在 `easy-eat-front` 執行 `npm run dev`，Vite 的 `/api` 會代理至 8787。
 
-```bash
-cd easy-eat-front
-npm ci
-npm run dev            # 啟動開發伺服器
-npm run build          # 型別檢查並建立正式版
-npm run type-check     # 僅執行型別檢查
-npm test               # 執行測試
-npm run test:watch     # 監看模式執行測試
-npm run test:coverage  # 產生測試覆蓋率
-npm run preview        # 預覽正式版
-npm run lint           # ESLint
-npm run format:check   # 檢查 Prettier 格式
-npm run check          # type-check + lint + format:check
+## Docker 預覽
+
+```sh
+cp .env.example .env
+# 編輯 .env 設定本機管理碼
+ docker compose up --build
 ```
 
-正式版輸出至 `easy-eat-front/dist/`。專案沒有獨立部署 script。
+服務僅綁定本機 `127.0.0.1:8787`，SQLite 保存在 `lunch-data` volume。Docker 用於本機驗證；正式 Sites 仍由 Workers 與 D1 執行，兩邊資料不會自動搬移。
 
-## 設定與限制
+## GitHub ↔ Sites 雙向同步
 
-- 不需 `.env` 或秘密設定；Vite 的 `BASE_URL` 由執行環境提供給 router。
-- 資料只保存在目前瀏覽器的 `localStorage`，不會跨裝置或使用者同步，清除網站資料也會刪除本機訂單。
-- 目前沒有真正的 HTTP server、使用者登入或權限控制；[`API.md`](API.md) 記錄的是 Mock API 與未來後端的對應介面。
+同步原始碼與部署網站是不同操作；此流程不會自動發布。
 
-## 現有路由
+1. 確認已提交本機修改，在 `main` 分支操作。
+2. 透過 Sites 原生 `create_source_repository_write_credential`，對 `.openai/hosting.json` 中的同一個 project ID 取得短效 Git 憑證。不得將 token 存檔、寫入 Git、放進指令參數或日誌。
+3. 執行 `npm run sync:status` 或 `npm run sync:pull`，在隱藏的 stdin 提示傳入原生回應 JSON。指令取回 GitHub 與 Sites 最新提交，僅允許快轉；分歧時停止，先人工合併與測試。
+4. 修改、建置、測試並提交後，執行 `npm run sync:push`，同樣經 stdin 傳入有效憑證。指令推送到 GitHub 與 Sites，並核對兩端 commit SHA 完全一致。
+5. 若某一端推送失敗，指令會報告尚未同步完成。保留本機提交，重新取得憑證／取回遠端狀態後重試，不可 force-push。
 
-| 路徑               | 功能                 |
-| ------------------ | -------------------- |
-| `/`                | 訂單清單             |
-| `/orders/add`      | 新增訂單             |
-| `/orders/:id/edit` | 編輯草稿或處理中訂單 |
-| `/orders/:id`      | 訂單明細             |
-| `/statistics`      | 餐點統計             |
-| `/admin`           | 餐廳與餐點後台管理   |
-| `/:pathMatch(.*)*` | 找不到頁面（404）    |
+無背景排程，也沒有永久憑證；從這裡更新網站時，依 `AGENTS.md` 完成同步。若直接在外部 GitHub 編輯，回到這裡後先 `sync:pull`，再測試及同步另一端。**Vue 3 與雙向同步是兩項獨立設定，不會自動將 React／Java 等不同實作互相轉換。**
 
-## 延伸文件
+## 正式發布
 
-- [前端說明](easy-eat-front/README.md)
-- [API 規格](API.md)
-- [設計與實作參考來源](docs/REFERENCES.md)
+原網址、公開權限、D1 綁定與 `LUNCH_ADMIN_CODE` 都沿用現有 Site。`npm run build` 產生自包含的 `dist/server/index.js`，將 Vue 靜態資產與既有 API 包在同一個 Worker，沒有額外主機。
+
+發布前必須先核對並同步兩個原始碼庫。使用 Sites source workflow 包裝已驗證的 `dist/`，再使用原生 `save_site_version`／`deploy_site_version`；保留 project ID、D1 綁定、既有不可變的 SQL 遷移。不要把 `dist`、本機資料庫、測試資料、管理碼或憑證提交到 GitHub。部署不是 `git push` 的自動效果。
+
+詳見 [遷移記錄](docs/migration-plan.md) 與 [API 契約](API.md)。
