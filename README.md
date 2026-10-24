@@ -66,7 +66,7 @@ cp .env.example .env
 
 ## main 保護
 
-`easy-eat-main` repository ruleset 套用於 `refs/heads/main`：必須經 PR、由 GitHub Actions 提供的 `verify` 成功、分支包含最新 main、討論已解決；批准人數為 0，僅允許 merge commit，禁止刪除與 force-push，無管理員或其他 bypass。
+`easy-eat-main` repository ruleset 套用於 `refs/heads/main`：必須經 PR、由 GitHub Actions 提供的 `verify` 成功、分支包含最新 main、討論已解決；批准人數為 0、無指定審核者、無未歸屬變更的額外批准要求，僅允許 merge commit，禁止刪除與 force-push，無管理員或其他 bypass。工具明確設定這些欄位，避免沿用 GitHub 的額外批准預設值。
 
 首次上線先以 PR 合併這套同步工具，等待合併後 main 的 CI 成功，再由 repository 管理員執行 `npm run protect:check` 查看設定、`npm run protect:apply` 套用並回讀驗證。重複套用會更新同名 repository ruleset。規則是 GitHub 伺服器設定，單純提交 YAML 並不代表保護已啟用；CI 的 token 維持唯讀，不持有管理權限。
 
