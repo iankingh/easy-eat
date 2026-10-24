@@ -3,9 +3,15 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { createGithubClient, repositoryName } from "./github.mjs";
 
-export function assertContentSyncSafe(localTree, sitesTree, baseTree) {
-  if (sitesTree !== baseTree && localTree !== sitesTree)
+export function assertContentSyncSafe(
+  localTree,
+  sitesTree,
+  baseTree,
+  sitesIncluded = false,
+) {
+  if (sitesTree !== baseTree && localTree !== sitesTree && !sitesIncluded)
     throw new Error(
       "Sites 與 GitHub／本機都有不同修改，請先合併與測試；不會覆蓋任一端。",
     );
@@ -28,13 +34,17 @@ async function credentialInput() {
   }
   process.stdin.setEncoding("utf8");
   let input = "";
-  for await (const chunk of process.stdin) {
-    input += chunk;
-    if (input.includes("\u0003")) throw new Error("已取消。");
-    if (/[\r\n]/.test(input)) break;
+  try {
+    for await (const chunk of process.stdin) {
+      input += chunk;
+      if (input.length > 65536) throw new Error("憑證輸入過長。");
+      if (input.includes("\u0003")) throw new Error("已取消。");
+      if (/[\r\n]/.test(input)) break;
+    }
+  } finally {
+    if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    process.stdin.pause();
   }
-  if (process.stdin.isTTY) process.stdin.setRawMode(false);
-  process.stdin.pause();
   const value = JSON.parse(input.trim());
   return value.credential || value;
 }
@@ -65,7 +75,8 @@ async function main() {
     throw new Error("Sites 憑證格式不正確。");
   if (
     credential.token_expires_at &&
-    Date.parse(credential.token_expires_at) <= Date.now()
+    (!Number.isFinite(Date.parse(credential.token_expires_at)) ||
+      Date.parse(credential.token_expires_at) <= Date.now())
   )
     throw new Error("Sites 憑證已過期，請重新取得。");
   const scrub = (value) =>
@@ -119,12 +130,21 @@ async function main() {
       throw new Error(scrub(result.stderr || "Git 操作未完成。"));
     return { ok: result.status === 0, output: result.stdout.trim() };
   };
+  const result = syncRepositories({
+    verb,
+    git,
+    link,
+    api: createGithubClient(repositoryName(link)),
+  });
+  console.log(JSON.stringify(result, null, 2));
+}
+
+export function syncRepositories({ verb, git, link, api }) {
   const rev = (value) => git(["rev-parse", value]).output;
   const tree = (commit) => rev(`${commit}^{tree}`);
   const ancestor = (a, b) =>
     git(["merge-base", "--is-ancestor", a, b], false, true).ok;
-  if (git(["symbolic-ref", "--short", "HEAD"]).output !== link.branch)
-    throw new Error("請先切換到 main，再執行同步。");
+  git(["symbolic-ref", "--short", "HEAD"]);
   if (git(["status", "--porcelain"]).output)
     throw new Error("本機有尚未提交的修改，請先保留或提交。");
   const origin = git(["remote", "get-url", "origin"]).output;
@@ -134,8 +154,8 @@ async function main() {
   )
     throw new Error("origin 與連結的 GitHub 專案不符。");
   if (
-    git(["ls-remote", "--get-url", credential.remote_url]).output !==
-    credential.remote_url
+    git(["ls-remote", "--get-url", link.site_source_remote]).output !==
+    link.site_source_remote
   )
     throw new Error("Sites URL 被 Git 設定改寫，已停止。");
   process.stderr.write("正在讀取兩端最新提交…\n");
@@ -150,7 +170,7 @@ async function main() {
       [
         "fetch",
         "--no-tags",
-        credential.remote_url,
+        link.site_source_remote,
         `+refs/heads/${link.branch}:refs/remotes/sites/${link.branch}`,
       ],
       true,
@@ -159,12 +179,10 @@ async function main() {
   let head = rev("HEAD");
   const github = rev(`refs/remotes/origin/${link.branch}`),
     sites = rev(`refs/remotes/sites/${link.branch}`);
-  if (!ancestor(github, head)) {
+  if (verb !== "status" && !ancestor(github, head)) {
     if (!ancestor(head, github))
       throw new Error("本機與 GitHub 歷史已分歧，請先合併。");
-    if (verb === "push")
-      throw new Error("GitHub 有較新提交，請先執行 sync:pull。");
-    if (verb === "pull") {
+    if (verb === "pull" || verb === "push") {
       git(["merge", "--ff-only", github]);
       head = rev("HEAD");
     }
@@ -193,38 +211,78 @@ async function main() {
   const localTree = tree(head),
     sitesTree = tree(sites);
   if (verb === "status") {
-    console.log(
-      JSON.stringify(
-        {
-          githubCommit: github,
-          localCommit: head,
-          sitesCommit: sites,
-          localTree,
-          sitesTree,
-          synchronized: head === github && localTree === sitesTree,
-          deployed: false,
-        },
-        null,
-        2,
-      ),
-    );
-    return;
+    return {
+      githubCommit: github,
+      localCommit: head,
+      sitesCommit: sites,
+      localTree,
+      sitesTree,
+      synchronized: head === github && localTree === sitesTree,
+      deployed: false,
+      state:
+        head === github && localTree === sitesTree ? "synchronized" : "pending",
+    };
   }
   if (verb === "pull") {
-    if (sitesTree !== baseTree && localTree !== sitesTree) {
+    if (
+      sitesTree !== baseTree &&
+      localTree !== sitesTree &&
+      !ancestor(sites, head)
+    ) {
       if (localTree !== baseTree)
         throw new Error("兩端都有不同內容，請先合併與測試；未修改本機檔案。");
       const imported = importSitesSnapshot(git, head, sites);
       git(["merge", "--ff-only", imported]);
-      console.log(
-        `已取回 Sites 修改：${imported}。請建置測試後執行 sync:push。`,
-      );
-    } else console.log(`已取回兩端狀態：${head}。尚未發布網站。`);
-    return;
+      head = imported;
+    }
+    return {
+      state: "pulled",
+      localCommit: head,
+      githubCommit: github,
+      sitesCommit: sites,
+      synchronized: head === github && tree(head) === sitesTree,
+      deployed: false,
+    };
   }
-  assertContentSyncSafe(localTree, sitesTree, baseTree);
-  process.stderr.write("正在同步 GitHub…\n");
-  git(["push", "origin", `HEAD:refs/heads/${link.branch}`]);
+  assertContentSyncSafe(localTree, sitesTree, baseTree, ancestor(sites, head));
+  if (head !== github) {
+    const repository = repositoryName(link),
+      prefix = `repos/${repository}`;
+    const branch = `sync/${head.slice(0, 12)}`;
+    git(["push", "origin", `${head}:refs/heads/${branch}`]);
+    const prs = api(
+      "GET",
+      `${prefix}/pulls?state=open&base=${encodeURIComponent(link.branch)}&head=${encodeURIComponent(repository.split("/")[0] + ":" + branch)}`,
+    );
+    const pr =
+      prs[0] ||
+      api("POST", `${prefix}/pulls`, {
+        title: "同步同事午餐團訂原始碼",
+        head: branch,
+        base: link.branch,
+        body: `將提交 ${head} 經 PR 與 verify 檢查合併後，再同步 Sites。此次不部署網站。`,
+      });
+    return {
+      state: "awaiting_merge",
+      synchronized: false,
+      deployed: false,
+      githubCommit: github,
+      localCommit: head,
+      sitesCommit: sites,
+      pullRequest: pr.html_url,
+    };
+  }
+  // Re-read both refs immediately before the mutation. The Site push is also non-force.
+  if (
+    git(["ls-remote", "origin", `refs/heads/${link.branch}`]).output.split(
+      /\s/,
+    )[0] !== github ||
+    git(
+      ["ls-remote", link.site_source_remote, `refs/heads/${link.branch}`],
+      true,
+    ).output.split(/\s/)[0] !== sites
+  )
+    throw new Error("遠端已變動，未推送 Sites，請重新同步。");
   let sitesCommit = sites;
   if (sitesTree !== localTree || linkedGithub !== head) {
     // A content snapshot keeps Site history small without rewriting either repository.
@@ -239,14 +297,14 @@ async function main() {
       git(
         [
           "push",
-          credential.remote_url,
+          link.site_source_remote,
           `${sitesCommit}:refs/heads/${link.branch}`,
         ],
         true,
       );
     } catch (error) {
       throw new Error(
-        `GitHub 已推送；Sites 尚未確認。請核對兩端狀態後重試。${error.message}`,
+        `GitHub 已合併；Sites 尚未確認。請核對兩端狀態後重試。${error.message}`,
       );
     }
   }
@@ -259,20 +317,15 @@ async function main() {
   const sitesAfter = rev(`refs/remotes/sites/${link.branch}`);
   if (githubAfter !== head || tree(sitesAfter) !== localTree)
     throw new Error("同步後遠端再次變動，請重新核對。");
-  console.log(
-    JSON.stringify(
-      {
-        synchronized: true,
-        githubCommit: head,
-        sitesCommit: sitesAfter,
-        contentTree: localTree,
-        identicalSource: true,
-        deployed: false,
-      },
-      null,
-      2,
-    ),
-  );
+  return {
+    state: "synchronized",
+    synchronized: true,
+    githubCommit: head,
+    sitesCommit: sitesAfter,
+    contentTree: localTree,
+    identicalSource: true,
+    deployed: false,
+  };
 }
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href)
   main().catch((error) => {

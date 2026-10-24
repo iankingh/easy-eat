@@ -7,6 +7,7 @@ import {
   cpSync,
 } from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import ts from "../easy-eat-front/node_modules/typescript/lib/typescript.js";
 const root = path.resolve(import.meta.dirname, "..");
 const source = readFileSync(
@@ -29,6 +30,22 @@ if (compiled.diagnostics?.length)
     }),
   );
 const apiCode = compiled.outputText.replace(/^export /gm, "");
+let provenance = "// Source-Commit: unversioned\n// Source-Tree: unversioned\n";
+try {
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+  const tree = execFileSync("git", ["rev-parse", "HEAD^{tree}"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+  provenance = `// Source-Commit: ${commit}\n// Source-Tree: ${tree}\n`;
+} catch {
+  /* Docker preview has no Git metadata; formal releases reject unversioned output. */
+}
 const assets = {};
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -58,7 +75,7 @@ const worker = `// Generated from worker/ordering.ts and easy-eat-front/dist. Do
 rmSync(path.join(root, "dist"), { recursive: true, force: true });
 mkdirSync(path.join(root, "dist/server"), { recursive: true });
 mkdirSync(path.join(root, "dist/.openai"), { recursive: true });
-writeFileSync(path.join(root, "dist/server/index.js"), worker);
+writeFileSync(path.join(root, "dist/server/index.js"), provenance + worker);
 cpSync(
   path.join(root, ".openai/hosting.json"),
   path.join(root, "dist/.openai/hosting.json"),
