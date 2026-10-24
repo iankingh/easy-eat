@@ -13,6 +13,11 @@
     "preview": "node scripts/local-server.mjs",
     "sync:status": "node scripts/sync-repositories.mjs status",
     "sync:pull": "node scripts/sync-repositories.mjs pull",
-    "sync:push": "node scripts/sync-repositories.mjs push"
+    "sync:push": "node scripts/sync-repositories.mjs push",
+    "protect:check": "node scripts/protect-main.mjs check",
+    "protect:apply": "node scripts/protect-main.mjs apply",
+    "release:check": "node scripts/release.mjs check",
+    "release:start": "node scripts/release.mjs start",
+    "release:finish": "node scripts/release.mjs finish"
   }
 }

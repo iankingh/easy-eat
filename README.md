@@ -54,19 +54,39 @@ cp .env.example .env
 
 同步原始碼與部署網站是不同操作；此流程不會自動發布。
 
-1. 確認已提交本機修改，在 `main` 分支操作。
+1. 在工作分支修改並提交，保留其他工作的未提交檔案。先以有效 GitHub CLI 登入（`gh auth status`）；需要 repository 的 PR／內容寫入權限。
 2. 透過 Sites 原生 `create_source_repository_write_credential`，對 `.openai/hosting.json` 中的同一個 project ID 取得短效 Git 憑證。不得將 token 存檔、寫入 Git、放進指令參數或日誌。
-3. 執行 `npm run sync:status` 或 `npm run sync:pull`，在隱藏的 stdin 提示傳入原生回應 JSON。指令取回 GitHub 與 Sites 最新提交；Sites 單邊修改可匯入 GitHub，兩端同時有不同內容時停止，先人工合併與測試。
-4. 修改、建置、測試並提交後，執行 `npm run sync:push`，同樣經 stdin 傳入有效憑證。指令推送到 GitHub 與 Sites，並核對兩端 Git tree SHA（完整原始碼內容）完全一致。
-5. 若某一端推送失敗，指令會報告尚未同步完成。保留本機提交，重新取得憑證／取回遠端狀態後重試，不可 force-push。
+3. 執行 `npm run sync:status` 或 `npm run sync:pull`，在隱藏的 stdin 提示傳入原生回應 JSON。指令取回兩端最新提交；Sites 單邊修改可匯入工作分支，兩端同時修改則停止。人工合併時保留最新 Sites commit 為祖先（可由 `refs/remotes/sites/main` 合併；獨立歷史需明確使用 `--allow-unrelated-histories`），逐項處理衝突並測試，不可整棵覆蓋任一端。
+4. 建置、測試並提交後執行 `npm run sync:push`。尚未合併的修改只會推送 `sync/<commit前12碼>` 分支並建立／重用 PR，回傳 `state: awaiting_merge`、`synchronized: false` 及 PR 網址；不會推 main 或 Sites。
+5. PR 必須通過 `verify`，且包含最新 main；有新 main 時先合併進工作分支再測試。使用 **merge commit** 合併 PR，保留 Sites 匯入的祖先關係。不要求另一人審核。
+6. 合併後重新執行 `sync:pull`、`sync:push`，各自經隱藏 stdin 傳入有效 Sites 憑證。工具取回合併後的 main，才同步 Sites 並核對兩端 tree SHA。只有 `state: synchronized`／`synchronized: true` 代表完成，`deployed` 仍為 `false`。
+7. 若某一端推送失敗或遠端同時變動，保留本機提交，取回最新狀態再重試；不可 force-push，也不要重複開相同提交的 PR。
 
 無背景排程，也沒有永久憑證；從這裡更新網站時，依 `AGENTS.md` 完成同步。若直接在外部 GitHub 編輯，回到這裡後先 `sync:pull`，再測試及同步另一端。**Vue 3 與雙向同步是兩項獨立設定，不會自動將 React／Java 等不同實作互相轉換。**
+
+## main 保護
+
+`easy-eat-main` repository ruleset 套用於 `refs/heads/main`：必須經 PR、由 GitHub Actions 提供的 `verify` 成功、分支包含最新 main、討論已解決；批准人數為 0，僅允許 merge commit，禁止刪除與 force-push，無管理員或其他 bypass。
+
+首次上線先以 PR 合併這套同步工具，等待合併後 main 的 CI 成功，再由 repository 管理員執行 `npm run protect:check` 查看設定、`npm run protect:apply` 套用並回讀驗證。重複套用會更新同名 repository ruleset。規則是 GitHub 伺服器設定，單純提交 YAML 並不代表保護已啟用；CI 的 token 維持唯讀，不持有管理權限。
 
 ## 正式發布
 
 原網址、公開權限、D1 綁定與 `LUNCH_ADMIN_CODE` 都沿用現有 Site。`npm run build` 產生自包含的 `dist/server/index.js`，將 Vue 靜態資產與既有 API 包在同一個 Worker，沒有額外主機。
 
 發布前必須先核對並同步兩個原始碼庫。先用 Sites source workflow 開啟獨立的 Sites checkout（不要直接在 GitHub checkout 套用 Sites Git 歷史），在該 checkout 安裝前端依賴、建置，再包裝已驗證的 `dist/`，再使用原生 `save_site_version`／`deploy_site_version`；保留 project ID、D1 綁定、既有不可變的 SQL 遷移。不要把 `dist`、本機資料庫、測試資料、管理碼或憑證提交到 GitHub。部署不是 `git push` 的自動效果。
+
+### 發布 commit 與結果追蹤
+
+發布工具使用 GitHub CLI 的 Deployments 寫入權限。以下 `.release/` 檔案只保存非機密的來源與結果 JSON，已忽略；**不能把短效 Git 憑證或環境變數放進去**。
+
+1. 確認 GitHub main 的完整 `verify` 成功，再從已同步、乾淨的 Sites checkout 執行原生 source workflow，依序執行前端依賴安裝（需要時）、`npm run build`、`npm test`，並封裝。不要在建置後修改原始碼。Worker 會標記建置時的 source commit／tree；無 Git 資訊的 Docker 預覽產物不能正式發布。
+2. 將原生 workflow 的完整封裝結果放在 `{ "source": <結果> }`，透過 stdin 傳給 `node scripts/release.mjs check`。它驗證 GitHub main CI、來源 tree、乾淨的 Sites HEAD、封裝 project ID 與 Worker 來源標記，輸出檢查結果及封裝 SHA-256。保存這份非機密輸出供後續使用。
+3. 使用原生 `save_site_version` 保存同一份封裝與 Sites commit。將 `{ "check": <檢查結果>, "savedVersion": <原生保存結果> }` 傳給 `node scripts/release.mjs start`；它再次檢查 main／CI／封裝雜湊，建立或重用 production Deployment，保存 GitHub commit、Sites commit、tree、版本 ID／號碼、CI 連結與封裝雜湊。失敗時停止，不可先發布。若 `alreadySucceeded: true`，不得再次部署。
+4. 保存 `start` 輸出的 release，使用原生 `deploy_site_version` 發布該版本，對非終態結果依原生指引查詢狀態。將 `{ "release": <start輸出>, "result": <原生發布或狀態結果> }` 傳給 `node scripts/release.mjs finish`，記錄 pending／in_progress／success／failure。只有原生 `succeeded` 且版本、project、正式網址都正確，才記錄 success。
+5. 若站已發布而 GitHub 寫入失敗，工具回報 `recordPending: true`。保留原生部署 ID 與上述輸入，只重試 `finish`，不可重複發布。遠端寫入結果不確定時，重試會先讀取既有紀錄。
+
+例如 `node scripts/release.mjs check < .release/source-input.json > .release/check.json`；`start`、`finish` 也由 stdin 接收對應 JSON。原生 Sites 工具仍是唯一的發布操作，這些腳本本身不呼叫發布 API，也不會自動部署。每次發布可在 [GitHub Deployments](https://github.com/iankingh/easy-eat/deployments) 查看對應 commit 與結果；舊 v18 不冒認為後來的 Vue commit。
 
 詳見 [遷移記錄](docs/migration-plan.md) 與 [API 契約](API.md)。
 

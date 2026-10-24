@@ -30,6 +30,7 @@ openspec/.vector-search.db*
 /dist/
 /.local-data/
 /.sites-runtime/
+/.release/
 /node_modules/
 *.sqlite*
 *.db
