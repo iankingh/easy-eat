@@ -354,6 +354,14 @@ test("main rules require PR, current verify from Actions, no approvals and no by
   const f = fixture(t),
     rules = mainRuleset(15368);
   assert.deepEqual(rules.bypass_actors, []);
+  const reviewPolicy = rules.rules.find(
+    (r) => r.type === "pull_request",
+  ).parameters;
+  assert.deepEqual(reviewPolicy.required_reviewers, []);
+  assert.equal(
+    reviewPolicy.require_extra_approval_for_unattributed_changes,
+    false,
+  );
   assert.equal(
     rules.rules.find((r) => r.type === "pull_request").parameters
       .required_approving_review_count,

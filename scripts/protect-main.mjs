@@ -19,9 +19,11 @@ export function mainRuleset(integrationId) {
         parameters: {
           required_approving_review_count: 0,
           dismiss_stale_reviews_on_push: true,
+          required_reviewers: [],
           require_code_owner_review: false,
           require_last_push_approval: false,
           required_review_thread_resolution: true,
+          require_extra_approval_for_unattributed_changes: false,
           allowed_merge_methods: ["merge"],
         },
       },
