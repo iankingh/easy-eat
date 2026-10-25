@@ -2,6 +2,7 @@
   "extends": "@tsconfig/node24/tsconfig.json",
   "include": ["e2e/**/*.ts", "playwright.config.ts"],
   "compilerOptions": {
+    "lib": ["ES2024", "DOM"],
     "noEmit": true,
     "types": ["node"]
   }

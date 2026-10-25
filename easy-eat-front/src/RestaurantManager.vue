@@ -169,7 +169,7 @@ function edit(item: Omit<MenuItem, 'available'>) {
           </form>
           <div v-else class="row">
             <div>
-              <strong>{{ item.name }}　{{ money(item.price) }}</strong>
+              <strong>{{ item.name }}&#x3000;{{ money(item.price) }}</strong>
               <p class="muted">{{ item.description }}</p>
             </div>
             <div class="actions">

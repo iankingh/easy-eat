@@ -35,4 +35,6 @@ JSON body 內的 `action` 指定操作。除 `place-order` 外，皆需 `x-admin
 
 `requestId` 使用 UUID v4。同一 request ID 與相同內容重試回傳原訂單；內容改變會拒絕。`mode` 為 `new`、`append`、`replace`。`new` 遇到同團相同帳號回傳 `409` 與 `code=duplicate-order`；`replace` 需該瀏覽器保存的不可猜測 order ID 及相符帳號。
 
+送單寫入時會再次檢查團次開放狀態、截止時間與餐點內容、價格及供應狀態；若與驗證時不同，回傳 `409` 與 `code=order-state-changed`，不新增或替換訂單，也不留下餐點快照與 request ID。請重新載入菜單、確認內容後再送出。訂單、餐點快照與 request ID 在同一個 D1 batch 交易中保存。
+
 錯誤格式為 `{error, code?, field?, errorId?}`。未驗證為 401、修改權限不符為 403、資料不存在為 404、日期／供應狀態／重複下單衝突為 409。此遷移保留現有第 18 版後端行為，未擅自變更 D1 schema 或商業規則。

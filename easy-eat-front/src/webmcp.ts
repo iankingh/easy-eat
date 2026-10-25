@@ -1,5 +1,5 @@
 import { api } from './api'
-import type { Snapshot } from './types'
+import type { Receipt, Snapshot } from './types'
 type Tool = {
   name: string
   title: string
@@ -11,7 +11,10 @@ type Tool = {
 type ModelContext = {
   registerTool(tool: Tool, options: { signal: AbortSignal }): void | Promise<void>
 }
-export function registerOrderingTools(roundId: string, refreshed: () => Promise<void>) {
+export function registerOrderingTools(
+  roundId: string,
+  submitted: (receipt: Receipt) => Promise<void>,
+) {
   const context = (document as Document & { modelContext?: ModelContext }).modelContext
   if (!context) return () => {}
   const controller = new AbortController(),
@@ -58,14 +61,24 @@ export function registerOrderingTools(roundId: string, refreshed: () => Promise<
       },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
       async execute(input) {
+        if (controller.signal.aborted) throw new Error('點餐頁面已切換，請重新讀取菜單後再送出。')
         const snapshot = await api<Snapshot>(query)
-        await api('', {
-          ...(input as Record<string, unknown>),
+        const payload = input as Pick<Receipt, 'name' | 'account' | 'items'> & { note?: string }
+        if (controller.signal.aborted) throw new Error('點餐頁面已切換，請重新讀取菜單後再送出。')
+        const result = await api<{ orderId: string }>('', {
+          ...payload,
           action: 'place-order',
           roundId: snapshot.round.id,
           requestId: crypto.randomUUID(),
         })
-        await refreshed()
+        await submitted({
+          orderId: result.orderId,
+          roundId: snapshot.round.id,
+          name: payload.name.trim(),
+          account: payload.account.trim(),
+          note: payload.note?.trim() || '',
+          items: payload.items.map((item) => ({ ...item })),
+        })
         return { status: 'submitted', message: '午餐訂單已送出。' }
       },
     },

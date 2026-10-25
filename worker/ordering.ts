@@ -221,33 +221,59 @@ export async function POST(request: Request) {
         normalized.push({ item, quantity });
       }
       const orderId = mode === "replace" ? replaceOrderId : crypto.randomUUID();
-      const snapshots: { item: MenuRow; quantity: number; snapshotId: number }[] = [];
-      for (const { item, quantity } of normalized) {
-        const snapshot = await database.prepare("INSERT INTO menu_items (round_id, name, description, price, available) VALUES (?, ?, ?, ?, 1) RETURNING id").bind(round.id, item.name, item.description, item.price).first<{ id: number }>();
-        if (!snapshot) throw new Error("保存餐點快照失敗，請再試一次。");
-        snapshots.push({ item, quantity, snapshotId: snapshot.id });
-      }
-      const statements: D1PreparedStatement[] = mode === "replace" ? [
-        database.prepare("UPDATE orders SET employee_name = ?, note = ?, status = 'new' WHERE id = ? AND round_id = ? AND account = ?").bind(name, note, orderId, round.id, account),
-        database.prepare("DELETE FROM order_items WHERE order_id = ?").bind(orderId),
-      ] : [
-        database.prepare("INSERT INTO orders (id, round_id, employee_name, account, note, status) SELECT ?, ?, ?, ?, ?, 'new' WHERE ? = 'append' OR NOT EXISTS (SELECT 1 FROM orders WHERE round_id = ? AND account = ?)").bind(orderId, round.id, name, account, note, mode, round.id, account),
+      // D1 batch is a transaction. Admit the request against current database state,
+      // then gate every write on that admission. JSON keeps 30 meals below D1's
+      // per-statement parameter limit. No snapshots are written before admission.
+      const admitted = "EXISTS (SELECT 1 FROM order_requests WHERE id = ? AND order_id = ?)";
+      const ownership = mode === "replace"
+        ? "EXISTS (SELECT 1 FROM orders WHERE id = ? AND round_id = ? AND account = ?)"
+        : mode === "new"
+          ? "NOT EXISTS (SELECT 1 FROM orders WHERE round_id = ? AND account = ?)"
+          : "1";
+      const ownershipArgs = mode === "replace" ? [orderId, round.id, account] : mode === "new" ? [round.id, account] : [];
+      const statements: D1PreparedStatement[] = [
+        database.prepare(`INSERT INTO order_requests (id, fingerprint, order_id)
+          SELECT ?, ?, CASE WHEN EXISTS (
+            SELECT 1 FROM order_rounds r
+            WHERE r.id = ? AND r.restaurant_id = ? AND r.status = 'open'
+              AND julianday(r.closes_at) > julianday('now')
+              AND (SELECT COUNT(*) FROM json_each(?) requested
+                JOIN restaurant_menu_items m ON m.id = json_extract(requested.value, '$.id')
+                LEFT JOIN round_menu_availability a ON a.menu_item_id = m.id AND a.round_id = r.id
+                WHERE m.restaurant_id = r.restaurant_id AND m.active = 1 AND COALESCE(a.available, 1) = 1
+                  AND m.name = json_extract(requested.value, '$.name')
+                  AND m.description = json_extract(requested.value, '$.description')
+                  AND m.price = json_extract(requested.value, '$.price')) = ?
+          ) AND ${ownership} THEN ? ELSE '' END`).bind(requestId, fingerprint, round.id, round.restaurantId, JSON.stringify(normalized.map(({ item }) => item)), normalized.length, ...ownershipArgs, orderId),
       ];
-      statements.push(
-        ...snapshots.map(({ item, quantity, snapshotId }) => database.prepare("INSERT INTO order_items (order_id, menu_item_id, item_name, quantity, unit_price) SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM orders WHERE id = ?)").bind(orderId, snapshotId, item.name, quantity, item.price, orderId)),
-        database.prepare("INSERT INTO order_requests (id, fingerprint, order_id) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM orders WHERE id = ?)").bind(requestId, fingerprint, orderId, orderId),
+      if (mode === "replace") statements.push(
+        database.prepare(`UPDATE orders SET employee_name = ?, note = ?, status = 'new' WHERE id = ? AND ${admitted}`).bind(name, note, orderId, requestId, orderId),
+        database.prepare(`DELETE FROM order_items WHERE order_id = ? AND ${admitted}`).bind(orderId, requestId, orderId),
       );
+      else statements.push(database.prepare(`INSERT INTO orders (id, round_id, employee_name, account, note, status) SELECT ?, ?, ?, ?, ?, 'new' WHERE ${admitted}`).bind(orderId, round.id, name, account, note, requestId, orderId));
+      for (const { item, quantity } of normalized) statements.push(
+        database.prepare(`INSERT INTO menu_items (round_id, name, description, price, available) SELECT ?, ?, ?, ?, 1 WHERE ${admitted}`).bind(round.id, item.name, item.description, item.price, requestId, orderId),
+        // The preceding insert is the newest snapshot in this serialized batch.
+        database.prepare(`INSERT INTO order_items (order_id, menu_item_id, item_name, quantity, unit_price) SELECT ?, (SELECT MAX(id) FROM menu_items WHERE round_id = ?), ?, ?, ? WHERE ${admitted}`).bind(orderId, round.id, item.name, quantity, item.price, requestId, orderId),
+      );
+      // Always reserve the request ID, even for a rejected admission: a concurrent
+      // retry must hit the unique constraint rather than reuse an earlier marker.
+      // Rejected markers are removed within this same transaction.
+      statements.push(database.prepare("DELETE FROM order_requests WHERE id = ? AND order_id = ''").bind(requestId));
       try { await database.batch(statements); }
       catch (error) {
         const replay = await database.prepare("SELECT fingerprint, order_id AS orderId FROM order_requests WHERE id = ?").bind(requestId).first<{ fingerprint: string; orderId: string }>();
         if (replay?.fingerprint === fingerprint) return Response.json({ ok: true, orderId: replay.orderId, replayed: true });
+        if (replay) return Response.json({ error: "這次送出的內容與原操作不同。請重新整理並確認訂單後再送出。" }, { status: 409 });
         throw error;
       }
-      const saved = await database.prepare("SELECT id FROM orders WHERE id = ?").bind(orderId).first();
+      const saved = await database.prepare("SELECT order_id FROM order_requests WHERE id = ?").bind(requestId).first();
       if (!saved) {
         const replay = await database.prepare("SELECT fingerprint, order_id AS orderId FROM order_requests WHERE id = ?").bind(requestId).first<{ fingerprint: string; orderId: string }>();
         if (replay?.fingerprint === fingerprint) return Response.json({ ok: true, orderId: replay.orderId, replayed: true });
-        return Response.json({ error: "這個帳號剛剛已送出訂單。請確認既有訂單，或明確選擇追加。", code: "duplicate-order" }, { status: 409 });
+        if (mode === "new" && await database.prepare("SELECT id FROM orders WHERE round_id = ? AND account = ? LIMIT 1").bind(round.id, account).first())
+          return Response.json({ error: "這個帳號剛剛已送出訂單。請確認既有訂單，或明確選擇追加。", code: "duplicate-order" }, { status: 409 });
+        return Response.json({ error: "團購狀態或菜單剛剛已變更，訂單未儲存。請重新整理並確認截止時間、餐點與價格後再送出。", code: "order-state-changed" }, { status: 409 });
       }
       return Response.json({ ok: true, orderId });
     }

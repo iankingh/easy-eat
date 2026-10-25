@@ -132,9 +132,16 @@ function showError(error: unknown) {
 }
 function restoreLocation() {
   const query = new URLSearchParams(location.search),
-    view = query.get('view')
-  tab.value =
-    view === 'admin' ? 'admin' : view === 'list' ? 'list' : query.has('round') ? 'order' : 'home'
+    view = query.get('view'),
+    nextTab =
+      view === 'admin' ? 'admin' : view === 'list' ? 'list' : query.has('round') ? 'order' : 'home'
+  // Invalidate cached data and in-flight loads when the requested page changes.
+  if (tab.value !== nextTab || roundId.value !== (query.get('round') || '')) {
+    ++loadVersion
+    data.value = null
+    receipt.value = null
+  }
+  tab.value = nextTab
   roundId.value = query.get('round') || ''
   section.value = query.get('manage') === 'restaurants' ? 'restaurants' : 'orders'
   restaurantId.value = query.get('restaurant') || ''
@@ -221,9 +228,15 @@ async function refresh(quiet = false, resetSettings = false) {
 watch([tab, roundId], ([view, id], _, onCleanup) => {
   if (view === 'order')
     onCleanup(
-      registerOrderingTools(id, async () => {
-        await refresh()
-        feedback('訂單已送出。')
+      registerOrderingTools(id, async (saved) => {
+        saveReceipt(saved)
+        if (tab.value !== 'order' || roundId.value !== String(saved.roundId)) return
+        try {
+          await refresh()
+          feedback('訂單已送出，可以在此瀏覽器修改上一筆訂單。')
+        } catch {
+          feedback('訂單已送出。最新狀態未能載入，請重新整理確認，請勿重複送單。')
+        }
       }),
     )
 })
@@ -278,7 +291,8 @@ async function createRound() {
   }
 }
 async function submitOrder() {
-  if (busy.value || !data.value) return
+  if (busy.value || loading.value || !data.value || String(data.value.round.id) !== roundId.value)
+    return
   if (!orderOpen.value) {
     showError('這團目前關閉中或已截止。')
     return
@@ -316,12 +330,7 @@ async function submitOrder() {
       note: payload.note,
       items: [...payload.items],
     }
-    receipt.value = saved
-    try {
-      localStorage.setItem(`lunch-receipt-${payload.roundId}`, JSON.stringify(saved))
-    } catch {
-      /* Keep the receipt in memory for this visit. */
-    }
+    saveReceipt(saved)
     pending = null
     quantities.value = {}
     note.value = ''
@@ -339,6 +348,14 @@ async function submitOrder() {
     showError(error)
   } finally {
     busy.value = false
+  }
+}
+function saveReceipt(saved: Receipt) {
+  if (tab.value === 'order' && roundId.value === String(saved.roundId)) receipt.value = saved
+  try {
+    localStorage.setItem(`lunch-receipt-${saved.roundId}`, JSON.stringify(saved))
+  } catch {
+    /* Keep the receipt in memory for this visit. */
   }
 }
 function editReceipt() {
@@ -534,7 +551,7 @@ onUnmounted(() => {
           <button type="button" class="back" @click="navigate('list')">返回訂單列表</button>
           <section class="round-banner">
             <h2>{{ orderOpen ? '開放點餐中' : '本團已截止' }}</h2>
-            <p>截止時間　{{ formatTime(data.round.closesAt) }}</p>
+            <p>截止時間&#x3000;{{ formatTime(data.round.closesAt) }}</p>
           </section>
           <div
             v-if="receipt && (!account.trim() || receipt.account === account.trim())"
@@ -774,7 +791,7 @@ onUnmounted(() => {
             <p class="muted">這裡只調整本團供應狀態，新增與編輯餐點請到餐廳／菜單管理。</p>
             <div v-for="item in data.menu" :key="item.id" class="meal-row row">
               <div>
-                <strong>{{ item.name }}　{{ money(item.price) }}</strong>
+                <strong>{{ item.name }}&#x3000;{{ money(item.price) }}</strong>
                 <p class="muted">{{ item.description }}</p>
               </div>
               <button
@@ -810,7 +827,7 @@ onUnmounted(() => {
             <article v-for="order in data.orders" :key="order.id" class="meal-row row">
               <div>
                 <strong
-                  >{{ order.name }}　<span class="muted">{{ order.account }}</span></strong
+                  >{{ order.name }}&#x3000;<span class="muted">{{ order.account }}</span></strong
                 >
                 <p>{{ order.items.map((item) => `${item.name} × ${item.quantity}`).join('、') }}</p>
                 <p v-if="order.note" class="muted">{{ order.note }}</p>
@@ -834,7 +851,7 @@ onUnmounted(() => {
             <article v-for="round in data.rounds" :key="round.id" class="meal-row row">
               <div>
                 <strong
-                  >{{ round.title }}　<span
+                  >{{ round.title }}&#x3000;<span
                     class="status"
                     :class="{ open: round.status === 'open' }"
                     >{{ round.status === 'open' ? '開放中' : '已關閉' }}</span
@@ -877,7 +894,7 @@ onUnmounted(() => {
           </dl>
           <p class="muted">{{ data.orderCount }} 筆訂單 · {{ data.mealCount }} 份餐點</p>
           <p class="separated">
-            團購狀態　<strong>{{ orderOpen ? '開放中' : '已截止' }}</strong>
+            團購狀態&#x3000;<strong>{{ orderOpen ? '開放中' : '已截止' }}</strong>
           </p>
         </section>
         <section class="tip">
