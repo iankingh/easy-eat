@@ -232,6 +232,205 @@ test("invalid and unavailable menu entries never create orders", async (t) => {
     0,
   );
 });
+test("order writes recheck round and menu state atomically", async (t) => {
+  const changes = {
+    closed: (f) =>
+      f.DB.sqlite
+        .prepare("UPDATE order_rounds SET status = 'closed' WHERE id = ?")
+        .run(f.roundId),
+    expired: (f) =>
+      f.DB.sqlite
+        .prepare(
+          "UPDATE order_rounds SET closes_at = '2000-01-01T10:30:00+08:00' WHERE id = ?",
+        )
+        .run(f.roundId),
+    soldOut: (f) =>
+      f.DB.sqlite
+        .prepare(
+          "INSERT INTO round_menu_availability (round_id, menu_item_id, available) VALUES (?, ?, 0)",
+        )
+        .run(f.roundId, f.menuItemId),
+    removed: (f) =>
+      f.DB.sqlite
+        .prepare("UPDATE restaurant_menu_items SET active = 0 WHERE id = ?")
+        .run(f.menuItemId),
+    repriced: (f) =>
+      f.DB.sqlite
+        .prepare(
+          "UPDATE restaurant_menu_items SET price = price + 10 WHERE id = ?",
+        )
+        .run(f.menuItemId),
+  };
+  for (const mode of ["new", "append", "replace"]) {
+    for (const [change, mutate] of Object.entries(changes)) {
+      await t.test(
+        `${mode}: ${change} before commit leaves no partial writes`,
+        async (t) => {
+          const f = await setup(t);
+          await f.post({ action: "toggle-round", roundId: f.roundId });
+          const payload = {
+            action: "place-order",
+            roundId: f.roundId,
+            name: "同事",
+            account: "atomic-test",
+            items: [{ menuItemId: f.menuItemId, quantity: 1 }],
+            requestId: crypto.randomUUID(),
+          };
+          const original = mode === "new" ? null : await f.post(payload, false);
+          const before = {
+            orders: f.DB.sqlite
+              .prepare("SELECT * FROM orders ORDER BY id")
+              .all(),
+            items: f.DB.sqlite
+              .prepare("SELECT * FROM order_items ORDER BY id")
+              .all(),
+            snapshots: f.DB.sqlite
+              .prepare("SELECT * FROM menu_items ORDER BY id")
+              .all(),
+            requests: f.DB.sqlite
+              .prepare("SELECT * FROM order_requests ORDER BY id")
+              .all(),
+          };
+          const batch = f.DB.batch.bind(f.DB);
+          f.DB.batch = async (statements) => {
+            mutate(f);
+            return batch(statements);
+          };
+          await f.post(
+            {
+              ...payload,
+              mode,
+              replaceOrderId: original?.orderId,
+              requestId: crypto.randomUUID(),
+              items: [{ menuItemId: f.menuItemId, quantity: 2 }],
+            },
+            false,
+            409,
+          );
+          assert.deepEqual(
+            f.DB.sqlite.prepare("SELECT * FROM orders ORDER BY id").all(),
+            before.orders,
+          );
+          assert.deepEqual(
+            f.DB.sqlite.prepare("SELECT * FROM order_items ORDER BY id").all(),
+            before.items,
+          );
+          assert.deepEqual(
+            f.DB.sqlite.prepare("SELECT * FROM menu_items ORDER BY id").all(),
+            before.snapshots,
+          );
+          assert.deepEqual(
+            f.DB.sqlite
+              .prepare("SELECT * FROM order_requests ORDER BY id")
+              .all(),
+            before.requests,
+          );
+        },
+      );
+    }
+  }
+});
+test("concurrent replacement retries cannot overwrite a newer order", async (t) => {
+  for (const samePayload of [true, false])
+    await t.test(
+      samePayload ? "matching retry" : "conflicting payload",
+      async (t) => {
+        const f = await setup(t);
+        await f.post({ action: "toggle-round", roundId: f.roundId });
+        const base = {
+          action: "place-order",
+          roundId: f.roundId,
+          name: "同事",
+          account: "retry-race",
+          items: [{ menuItemId: f.menuItemId, quantity: 1 }],
+          requestId: crypto.randomUUID(),
+        };
+        const { orderId } = await f.post(base, false);
+        const retry = {
+          ...base,
+          mode: "replace",
+          replaceOrderId: orderId,
+          requestId: crypto.randomUUID(),
+          note: "retry",
+          items: [{ menuItemId: f.menuItemId, quantity: 2 }],
+        };
+        const batch = f.DB.batch.bind(f.DB);
+        f.DB.batch = async (statements) => {
+          f.DB.batch = batch;
+          await f.post(
+            { ...retry, note: samePayload ? retry.note : "different request" },
+            false,
+          );
+          await f.post(
+            {
+              ...retry,
+              requestId: crypto.randomUUID(),
+              note: "latest",
+              items: [{ menuItemId: f.menuItemId, quantity: 3 }],
+            },
+            false,
+          );
+          await f.post({ action: "toggle-round", roundId: f.roundId });
+          return batch(statements);
+        };
+        const response = await f.post(retry, false, samePayload ? 200 : 409);
+        if (samePayload) assert.equal(response.replayed, true);
+        const saved = await (
+          await f.fetch(`?roundId=${f.roundId}`, undefined, true)
+        ).json();
+        assert.equal(saved.orders.length, 1);
+        assert.equal(saved.orders[0].note, "latest");
+        assert.equal(saved.orders[0].items[0].quantity, 3);
+      },
+    );
+});
+test("a 30-item order stays within D1 bind limits and keeps each snapshot", async (t) => {
+  const f = await setup(t);
+  for (let i = 1; i < 30; i++)
+    await f.post({
+      action: "add-menu-item",
+      restaurantId: f.restaurantId,
+      name: `餐點 ${i}`,
+      price: 100 + i,
+    });
+  await f.post({ action: "toggle-round", roundId: f.roundId });
+  const menu = (await (await f.fetch(`?roundId=${f.roundId}`)).json()).menu;
+  const prepare = f.DB.prepare;
+  f.DB.prepare = (sql) => {
+    const statement = prepare(sql);
+    const bind = statement.bind;
+    statement.bind = (...args) => {
+      assert.ok(args.length <= 100, "D1 limits a statement to 100 bindings");
+      return bind(...args);
+    };
+    return statement;
+  };
+  await f.post(
+    {
+      action: "place-order",
+      roundId: f.roundId,
+      name: "同事",
+      account: "large-order",
+      requestId: crypto.randomUUID(),
+      items: menu.map((item) => ({ menuItemId: item.id, quantity: 1 })),
+    },
+    false,
+  );
+  const snapshot = await (
+    await f.fetch(`?roundId=${f.roundId}`, undefined, true)
+  ).json();
+  assert.equal(snapshot.orders[0].items.length, 30);
+  assert.equal(
+    snapshot.orderTotal,
+    menu.reduce((sum, item) => sum + item.price, 0),
+  );
+  const rows = f.DB.sqlite
+    .prepare(
+      "SELECT oi.item_name, m.name FROM order_items oi JOIN menu_items m ON m.id = oi.menu_item_id",
+    )
+    .all();
+  assert.ok(rows.every((row) => row.item_name === row.name));
+});
 test("Worker serves built Vue assets and refuses unknown APIs and unsupported methods", async () => {
   const response = await worker.fetch(new Request("http://test/"), {}, {});
   assert.equal(response.status, 200);

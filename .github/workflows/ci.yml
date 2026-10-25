@@ -21,6 +21,8 @@ jobs:
           cache: npm
           cache-dependency-path: easy-eat-front/package-lock.json
       - run: npm --prefix easy-eat-front ci
+      - run: npm --prefix easy-eat-front run lint
+      - run: npm --prefix easy-eat-front run type-check:e2e
       - run: npm run build
       - run: npm test
       - run: npx playwright install --with-deps chromium
