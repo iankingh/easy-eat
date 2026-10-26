@@ -144,7 +144,7 @@ export function syncRepositories({ verb, git, link, api }) {
   const tree = (commit) => rev(`${commit}^{tree}`);
   const ancestor = (a, b) =>
     git(["merge-base", "--is-ancestor", a, b], false, true).ok;
-  git(["symbolic-ref", "--short", "HEAD"]);
+  const workingBranch = git(["symbolic-ref", "--short", "HEAD"]).output;
   if (git(["status", "--porcelain"]).output)
     throw new Error("本機有尚未提交的修改，請先保留或提交。");
   const origin = git(["remote", "get-url", "origin"]).output;
@@ -177,11 +177,42 @@ export function syncRepositories({ verb, git, link, api }) {
     );
   fetchSites();
   let head = rev("HEAD");
+  // Both computers share this branch. Fetch its remote head before updating it;
+  // a diverged branch requires an explicit merge and is never force-pushed.
+  if (workingBranch !== link.branch) {
+    const remoteRef = `refs/heads/${workingBranch}`;
+    if (git(["ls-remote", "--heads", "origin", remoteRef]).output) {
+      const trackingRef = `refs/remotes/origin/${workingBranch}`;
+      git(["fetch", "--no-tags", "origin", `+${remoteRef}:${trackingRef}`]);
+      const remoteHead = rev(trackingRef);
+      if (verb !== "status") {
+        if (!ancestor(remoteHead, head)) {
+          if (!ancestor(head, remoteHead))
+            throw new Error(
+              "本機與遠端工作分支已有分歧，請先合併 origin/" +
+                workingBranch +
+                "，保留兩台電腦的提交後再同步。",
+            );
+          git(["merge", "--ff-only", trackingRef]);
+          head = rev("HEAD");
+        }
+        git([
+          "branch",
+          `--set-upstream-to=origin/${workingBranch}`,
+          workingBranch,
+        ]);
+      }
+    }
+  }
   const github = rev(`refs/remotes/origin/${link.branch}`),
     sites = rev(`refs/remotes/sites/${link.branch}`);
   if (verb !== "status" && !ancestor(github, head)) {
     if (!ancestor(head, github))
-      throw new Error("本機與 GitHub 歷史已分歧，請先合併。");
+      throw new Error(
+        "本機與 GitHub main 歷史已分歧，請先合併 origin/" +
+          link.branch +
+          " 並測試後再同步。",
+      );
     if (verb === "pull" || verb === "push") {
       git(["merge", "--ff-only", github]);
       head = rev("HEAD");
@@ -231,6 +262,10 @@ export function syncRepositories({ verb, git, link, api }) {
     ) {
       if (localTree !== baseTree)
         throw new Error("兩端都有不同內容，請先合併與測試；未修改本機檔案。");
+      if (workingBranch === link.branch)
+        throw new Error(
+          "Sites 有待審查的修改，請先 git switch -c work/sites-sync 建立工作分支，再執行 sync:pull；不會將未審查內容匯入 main。",
+        );
       const imported = importSitesSnapshot(git, head, sites);
       git(["merge", "--ff-only", imported]);
       head = imported;
@@ -246,10 +281,14 @@ export function syncRepositories({ verb, git, link, api }) {
   }
   assertContentSyncSafe(localTree, sitesTree, baseTree, ancestor(sites, head));
   if (head !== github) {
+    if (workingBranch === link.branch)
+      throw new Error(
+        "請先 git switch -c work/<功能名稱> 建立工作分支，再執行 sync:push；main 僅保留已合併的程式。",
+      );
     const repository = repositoryName(link),
       prefix = `repos/${repository}`;
-    const branch = `sync/${head.slice(0, 12)}`;
-    git(["push", "origin", `${head}:refs/heads/${branch}`]);
+    const branch = workingBranch;
+    git(["push", "--set-upstream", "origin", `${branch}:refs/heads/${branch}`]);
     const prs = api(
       "GET",
       `${prefix}/pulls?state=open&base=${encodeURIComponent(link.branch)}&head=${encodeURIComponent(repository.split("/")[0] + ":" + branch)}`,
@@ -257,10 +296,10 @@ export function syncRepositories({ verb, git, link, api }) {
     const pr =
       prs[0] ||
       api("POST", `${prefix}/pulls`, {
-        title: "同步同事午餐團訂原始碼",
+        title: `更新 ${branch} 的同事午餐團訂原始碼`,
         head: branch,
         base: link.branch,
-        body: `將提交 ${head} 經 PR 與 verify 檢查合併後，再同步 Sites。此次不部署網站。`,
+        body: `此功能使用工作分支 ${branch}；後續提交更新同一分支與 PR。通過 verify 後以 merge commit 合併 main，再同步 Sites。原始碼同步不會自動部署網站。`,
       });
     return {
       state: "awaiting_merge",
@@ -270,6 +309,7 @@ export function syncRepositories({ verb, git, link, api }) {
       localCommit: head,
       sitesCommit: sites,
       pullRequest: pr.html_url,
+      workingBranch: branch,
     };
   }
   // Re-read both refs immediately before the mutation. The Site push is also non-force.

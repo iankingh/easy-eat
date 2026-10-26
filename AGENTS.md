@@ -34,6 +34,15 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 
 <!-- SPECTRA:END -->
 
+## GitHub 與跨電腦開發
+
+- `main` 只保留已完成、通過檢查且經 PR 合併的程式。
+- 同一項功能只使用同一條工作分支，建議命名 `work/<功能名稱>`。公司與家裡接續該分支，不依電腦、日期或 commit 另開分支。
+- 換電腦前 commit 並 push；另一台開始修改前先 fetch、切至同一分支並 `git pull --ff-only`。未提交檔案與本機 stash 不會跨電腦同步。
+- 工作分支持續更新同一個 PR；不得新增 `sync/<commit>` 分支。`sync:push` 使用目前分支並設定 upstream，遠端與本機分歧時停止，保留兩邊提交。
+- 功能完成後通過 verify，以 merge commit 合併 main。專用 `branch-cleanup.yml` 工作取得 `contents: write`／`pull-requests: read`，只清理已合併且沒有新增提交的遠端分支；不得刪除 main 或未合併工作。一般驗證 CI 維持唯讀。
+- 人員在公司／家裡日常開發只需要 GitHub，不必取得 Sites 憑證。完整步驟在 `docs/DEVELOPMENT.md`；本環境整合 Sites／發布時再遵循下方規則。
+
 ## 同事午餐團訂（目前產品）
 
 以公開 Sites「點餐系統」第 18 版為基準，已取代舊 Easy Eat Mock UI。前端 Vue 3，正式後端 Cloudflare Workers／D1；未獲使用者新要求不要改成 Spring Boot。`openspec/` 中舊 Easy Eat 規格屬於歷史，不得據此覆蓋現在的功能。

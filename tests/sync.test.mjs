@@ -22,9 +22,10 @@ function fixture(t) {
     branch: "main",
     site_source_remote: "https://sites.fixture/repo.git",
   };
+  let activeDir = dir;
   const actual = (args, input) => {
     const result = spawnSync("git", args, {
-      cwd: dir,
+      cwd: activeDir,
       input,
       encoding: "utf8",
     });
@@ -44,7 +45,7 @@ function fixture(t) {
   run(["config", "user.email", "sync@example.invalid"]);
   writeFileSync(
     path.join(dir, ".git/info/exclude"),
-    "github.git/\nsites.git/\n",
+    "github.git/\nsites.git/\nhome/\n",
   );
   writeFileSync(path.join(dir, "menu.txt"), "base menu\n");
   writeFileSync(path.join(dir, "notes.txt"), "base notes\n");
@@ -62,6 +63,7 @@ function fixture(t) {
   );
   run(["push", "-q", siteRemote, `${initialSite}:refs/heads/main`]);
   link.imported_commit = initialSite;
+  run(["switch", "-c", "work/test-sync"]);
   const git = (args, remote = false, allowFailure = false, input) => {
     calls.push({ args: [...args], remote });
     if (args.join(" ") === "remote get-url origin")
@@ -93,7 +95,15 @@ function fixture(t) {
     return r;
   };
   const api = (method, endpoint, body) => {
-    if (method === "GET" && endpoint.includes("/pulls?")) return prs;
+    if (method === "GET" && endpoint.includes("/pulls?")) {
+      const query = new URL(`https://fixture.invalid/${endpoint}`).searchParams;
+      return prs.filter(
+        (pr) =>
+          !pr.merged &&
+          pr.head === query.get("head").split(":")[1] &&
+          pr.base === query.get("base"),
+      );
+    }
     if (method === "POST" && endpoint.endsWith("/pulls")) {
       const pr = { ...body, html_url: "https://github.com/owner/repo/pull/1" };
       prs.push(pr);
@@ -102,7 +112,7 @@ function fixture(t) {
     assert.fail(`Unexpected GitHub API: ${method} ${endpoint}`);
   };
   const commit = (file, text) => {
-    writeFileSync(path.join(dir, file), text);
+    writeFileSync(path.join(activeDir, file), text);
     run(["add", file]);
     run(["commit", "-qm", `fixture edit ${file}`]);
     return run(["rev-parse", "HEAD"]);
@@ -112,6 +122,10 @@ function fixture(t) {
     run(["--git-dir", siteRemote, "rev-parse", "refs/heads/main"]);
   return {
     dir,
+    origin,
+    cd: (next) => {
+      activeDir = next;
+    },
     run,
     base,
     baseTree,
@@ -140,7 +154,7 @@ test("unmerged changes open/reuse a PR without pushing either main or Sites; mer
     f.calls.some(
       (c) =>
         c.args[0] === "push" &&
-        c.args[1] === "origin" &&
+        c.args.includes("origin") &&
         c.args.at(-1).endsWith(":refs/heads/main"),
     ),
     false,
@@ -150,12 +164,77 @@ test("unmerged changes open/reuse a PR without pushing either main or Sites; mer
     "Merge fixture PR\n",
   );
   f.run(["push", "-q", "origin", `${merge}:refs/heads/main`]);
+  f.run(["push", "origin", "--delete", "work/test-sync"]);
   const synced = f.invoke();
   assert.equal(synced.state, "synchronized");
   assert.equal(synced.githubCommit, merge);
   const site = f.siteHead();
   assert.equal(f.invoke().sitesCommit, site); // retry creates no duplicate snapshot
   assert.equal(synced.contentTree, f.run(["rev-parse", `${site}^{tree}`]));
+  assert.equal(f.run(["ls-remote", "origin", "refs/heads/work/test-sync"]), "");
+});
+test("successive commits update one working branch, upstream and PR", (t) => {
+  const f = fixture(t);
+  f.commit("menu.txt", "first change\n");
+  const first = f.invoke();
+  const second = f.commit("notes.txt", "next change\n");
+  assert.equal(f.invoke().pullRequest, first.pullRequest);
+  assert.equal(f.prs.length, 1);
+  assert.equal(f.prs[0].head, "work/test-sync");
+  assert.equal(f.run(["rev-parse", "@{upstream}"]), second);
+  assert.equal(f.run(["ls-remote", "--heads", "origin"]).split("\n").length, 2);
+  assert.equal(
+    f.run(["ls-remote", "origin", "refs/heads/work/test-sync"]).split(/\s/)[0],
+    second,
+  );
+});
+test("a second computer continues the same branch and the first pulls it without another PR", (t) => {
+  const f = fixture(t);
+  f.commit("menu.txt", "company change\n");
+  const first = f.invoke();
+  const home = path.join(f.dir, "home");
+  f.run(["clone", "-q", "--branch", "work/test-sync", f.origin, home]);
+  f.cd(home);
+  f.run(["config", "user.name", "Home Fixture"]);
+  f.run(["config", "user.email", "home@example.invalid"]);
+  const latest = f.commit("notes.txt", "home change\n");
+  assert.equal(f.invoke().pullRequest, first.pullRequest);
+  f.cd(f.dir);
+  const pulled = f.invoke("pull");
+  assert.equal(pulled.localCommit, latest);
+  assert.equal(f.run(["show", "HEAD:notes.txt"]), "home change");
+  assert.equal(f.prs.length, 1);
+  assert.equal(f.siteHead(), f.initialSite);
+});
+test("divergent work on two computers is preserved and rejected without force-pushing", (t) => {
+  const f = fixture(t);
+  const shared = f.commit("menu.txt", "shared change\n");
+  f.invoke();
+  const home = path.join(f.dir, "home");
+  f.run(["clone", "-q", "--branch", "work/test-sync", f.origin, home]);
+  f.cd(home);
+  f.run(["config", "user.name", "Home Fixture"]);
+  f.run(["config", "user.email", "home@example.invalid"]);
+  const remote = f.commit("notes.txt", "home change\n");
+  f.run(["push", "origin", "work/test-sync"]);
+  f.cd(f.dir);
+  const local = f.commit("notes.txt", "company change\n");
+  assert.throws(() => f.invoke(), /工作分支.*分歧/);
+  assert.equal(f.run(["rev-parse", "HEAD"]), local);
+  assert.equal(
+    f.run(["ls-remote", "origin", "refs/heads/work/test-sync"]).split(/\s/)[0],
+    remote,
+  );
+  assert.notEqual(local, shared);
+  assert.equal(f.siteHead(), f.initialSite);
+});
+test("unreviewed commits on main require a working branch and never create sync branches", (t) => {
+  const f = fixture(t);
+  f.run(["switch", "main"]);
+  f.commit("menu.txt", "unreviewed main change\n");
+  assert.throws(() => f.invoke(), /工作分支/);
+  assert.equal(f.prs.length, 0);
+  assert.equal(f.run(["ls-remote", "--heads", "origin"]).split("\n").length, 1);
 });
 test("simultaneous edits stop until latest Site commit is merged, then PR and sync preserve both edits", (t) => {
   const f = fixture(t);
@@ -248,4 +327,19 @@ test("lost Site push response is reconciled without duplicating a snapshot", (t)
   const written = f.siteHead();
   assert.notEqual(written, f.initialSite);
   assert.equal(f.invoke().sitesCommit, written);
+});
+test("Site-only changes are not imported directly into main", (t) => {
+  const f = fixture(t);
+  f.run(["switch", "main"]);
+  writeFileSync(path.join(f.dir, "menu.txt"), "site-only menu\n");
+  f.run(["add", "menu.txt"]);
+  const site = f.run(
+    ["commit-tree", f.run(["write-tree"]), "-p", f.initialSite],
+    "Site-only edit\n",
+  );
+  f.run(["push", "-q", f.siteRemote, `${site}:refs/heads/main`]);
+  f.run(["restore", "--source=HEAD", "--staged", "--worktree", "menu.txt"]);
+  assert.throws(() => f.invoke("pull"), /工作分支/);
+  assert.equal(f.run(["rev-parse", "HEAD"]), f.base);
+  assert.equal(f.run(["show", "HEAD:menu.txt"]), "base menu");
 });
