@@ -2,7 +2,7 @@
 
 以目前公開的 [同事午餐團訂](https://team-lunch-orders.ianaa10716.chatgpt.site) 第 18 版為功能、資料與操作流程基準。前端改為 **Vue 3**，正式後端維持 **Cloudflare Workers + D1**。
 
-GitHub 與 Sites 連接的是同一份程式碼，並各自保留 Git 歷史。這次同步原始碼，尚未發布新的 Vue 版；目前公開網站仍可使用。
+GitHub 與 Sites 連接的是同一份程式碼，並各自保留 Git 歷史。公司與家裡透過 GitHub 接續開發：`main` 保存已完成程式，同一功能共用一條 `work/<功能名稱>` 工作分支。操作步驟見 [跨電腦開發指南](docs/DEVELOPMENT.md)。
 
 ## 專案結構
 
@@ -57,9 +57,9 @@ cp .env.example .env
 1. 在工作分支修改並提交，保留其他工作的未提交檔案。先以有效 GitHub CLI 登入（`gh auth status`）；需要 repository 的 PR／內容寫入權限。
 2. 透過 Sites 原生 `create_source_repository_write_credential`，對 `.openai/hosting.json` 中的同一個 project ID 取得短效 Git 憑證。不得將 token 存檔、寫入 Git、放進指令參數或日誌。
 3. 執行 `npm run sync:status` 或 `npm run sync:pull`，在隱藏的 stdin 提示傳入原生回應 JSON。指令取回兩端最新提交；Sites 單邊修改可匯入工作分支，兩端同時修改則停止。人工合併時保留最新 Sites commit 為祖先（可由 `refs/remotes/sites/main` 合併；獨立歷史需明確使用 `--allow-unrelated-histories`），逐項處理衝突並測試，不可整棵覆蓋任一端。
-4. 建置、測試並提交後執行 `npm run sync:push`。尚未合併的修改只會推送 `sync/<commit前12碼>` 分支並建立／重用 PR，回傳 `state: awaiting_merge`、`synchronized: false` 及 PR 網址；不會推 main 或 Sites。
+4. 在工作分支（例如 `work/order-edit`）建置、測試並提交後執行 `npm run sync:push`。它會推送並設定目前分支的 upstream、更新同一個 PR，不再按 commit 另建 `sync/...` 分支。回傳 `state: awaiting_merge`、`synchronized: false`、`workingBranch` 及 PR 網址；不會推 main 或 Sites。腳本會先取得該工作分支的遠端更新；有分歧就停止，請合併並保留兩台電腦的提交。
 5. PR 必須通過 `verify`，且包含最新 main；有新 main 時先合併進工作分支再測試。使用 **merge commit** 合併 PR，保留 Sites 匯入的祖先關係。不要求另一人審核。
-6. 合併後重新執行 `sync:pull`、`sync:push`，各自經隱藏 stdin 傳入有效 Sites 憑證。工具取回合併後的 main，才同步 Sites 並核對兩端 tree SHA。只有 `state: synchronized`／`synchronized: true` 代表完成，`deployed` 仍為 `false`。
+6. 合併後，專用 Action 會刪除已合併且沒有新增提交的遠端工作分支。切回 main 取得最新程式，再執行 `sync:pull`、`sync:push`，各自經隱藏 stdin 傳入有效 Sites 憑證。工具取回合併後的 main，才同步 Sites 並核對兩端 tree SHA。只有 `state: synchronized`／`synchronized: true` 代表完成，`deployed` 仍為 `false`。
 7. 若某一端推送失敗或遠端同時變動，保留本機提交，取回最新狀態再重試；不可 force-push，也不要重複開相同提交的 PR。
 
 無背景排程，也沒有永久憑證；從這裡更新網站時，依 `AGENTS.md` 完成同步。若直接在外部 GitHub 編輯，回到這裡後先 `sync:pull`，再測試及同步另一端。**Vue 3 與雙向同步是兩項獨立設定，不會自動將 React／Java 等不同實作互相轉換。**
