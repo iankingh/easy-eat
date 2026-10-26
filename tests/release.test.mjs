@@ -8,6 +8,7 @@ import {
   archiveHash,
   checkRelease,
   startRelease,
+  startReleaseRecord,
   finishRelease,
   validateArchive,
 } from "../scripts/release.mjs";
@@ -208,6 +209,59 @@ test("release gate rejects pending CI, a spoofed provider, wrong source tree and
     /尚未提交/,
   );
   assert.equal(f.deployments.length, 0);
+});
+test("Actions records checked releases as pending without requiring a local archive", (t) => {
+  const f = fixture(t),
+    check = f.check();
+  check.archive = path.join(f.dir, "not-on-this-runner.tar.gz");
+  assert.throws(
+    () =>
+      startRelease({ check, savedVersion: f.savedVersion, link, api: f.api }),
+    /ENOENT/,
+  );
+  const args = { check, savedVersion: f.savedVersion, link, api: f.api };
+  const release = startReleaseRecord(args);
+  assert.equal(release.alreadySucceeded, false);
+  assert.equal(f.statuses.get(release.deploymentId)[0].state, "pending");
+  assert.equal(startReleaseRecord(args).deploymentId, release.deploymentId);
+  assert.equal(f.deployments.length, 1);
+  assert.equal(
+    finishRelease({ release, result: f.result, link, api: f.api }).state,
+    "success",
+  );
+});
+test("Actions recording still rejects stale main, pending CI and mismatched Sites receipts", (t) => {
+  const f = fixture(t),
+    check = f.check();
+  const args = { check, savedVersion: f.savedVersion, link, api: f.api };
+  f.flags.success = false;
+  assert.throws(() => startReleaseRecord(args), /CI/);
+  f.flags.success = true;
+  f.flags.main = "d".repeat(40);
+  assert.throws(() => startReleaseRecord(args), /CI|main/);
+  f.flags.main = gh;
+  assert.throws(
+    () =>
+      startReleaseRecord({
+        ...args,
+        savedVersion: { ...f.savedVersion, source: { commit_sha: gh } },
+      }),
+    /save_site_version/,
+  );
+  assert.equal(f.deployments.length, 0);
+});
+test("record-start cannot bypass archive checking from an ordinary CLI", () => {
+  assert.throws(
+    () =>
+      execFileSync(process.execPath, ["scripts/release.mjs", "record-start"], {
+        cwd: path.resolve(import.meta.dirname, ".."),
+        input: "{}",
+        encoding: "utf8",
+        env: { ...process.env, GITHUB_ACTIONS: "false" },
+        stdio: ["pipe", "pipe", "pipe"],
+      }),
+    (error) => error.status === 1 && /僅供/.test(error.stderr),
+  );
 });
 test("release start rejects a changed artifact, changed main, and a mismatched saved version", (t) => {
   const f = fixture(t),

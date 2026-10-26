@@ -125,11 +125,19 @@ function payloadFor(check, savedVersion, link) {
 }
 
 export function startRelease({ check, savedVersion, link, api }) {
-  const payload = payloadFor(check, savedVersion, link);
+  payloadFor(check, savedVersion, link);
   requireValue(
     archiveHash(check.archive) === check.archiveSha256,
     "封裝檔已變更；停止發布並重新檢查。",
   );
+  return startReleaseRecord({ check, savedVersion, link, api });
+}
+
+// The source checkout validates the local archive with `check` before Sites
+// saves it. An Actions runner has only those non-secret receipts, so it records
+// a pending deployment without pretending to build or publish the Site.
+export function startReleaseRecord({ check, savedVersion, link, api }) {
+  const payload = payloadFor(check, savedVersion, link);
   const main = verifiedMain(api, check.repository, link.branch);
   requireValue(
     main.sha === check.githubCommit && main.tree === check.contentTree,
@@ -290,8 +298,8 @@ export function finishRelease({ release, result, link, api }) {
 async function main() {
   const command = process.argv[2];
   requireValue(
-    ["check", "start", "finish"].includes(command),
-    "Usage: node scripts/release.mjs check|start|finish < input.json",
+    ["check", "start", "record-start", "finish"].includes(command),
+    "Usage: node scripts/release.mjs check|start|record-start|finish < input.json",
   );
   let text = "";
   for await (const chunk of process.stdin) {
@@ -314,7 +322,25 @@ async function main() {
     result = checkRelease({ source: input.source, link, api, git });
   } else if (command === "start")
     result = startRelease({ ...input, link, api });
-  else result = finishRelease({ ...input, link, api });
+  else if (command === "record-start") {
+    requireValue(
+      process.env.GITHUB_ACTIONS === "true" &&
+        process.env.GITHUB_EVENT_NAME === "workflow_dispatch" &&
+        process.env.GITHUB_REPOSITORY === repositoryName(link) &&
+        process.env.GITHUB_REF === `refs/heads/${link.branch}` &&
+        process.env.GITHUB_SHA === input.check?.githubCommit,
+      "record-start 僅供此 repository 的 main 發布紀錄工作使用。",
+    );
+    requireValue(
+      /^sha256:[0-9a-f]{64}$/.test(
+        input.savedVersion?.archive_storage?.content_hash || "",
+      ) &&
+        typeof input.savedVersion?.archive_storage?.sediment_file_id ===
+          "string",
+      "Actions 發布紀錄需要已保存封裝的原生 Sites 收據。",
+    );
+    result = startReleaseRecord({ ...input, link, api });
+  } else result = finishRelease({ ...input, link, api });
   console.log(JSON.stringify(result, null, 2));
 }
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href)

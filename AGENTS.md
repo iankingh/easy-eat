@@ -44,8 +44,8 @@ Changes can be parked（暫存）— temporarily moved out of `openspec/changes/
 - 提交後用同一同步腳本 `push` 建立／重用 GitHub PR。`awaiting_merge` 不代表同步完成；必須等 `verify` 成功且包含最新 main，使用 merge commit 合併（不要求第二人批准），再 `pull`／`push` 同步 Sites。禁止直推 main 或使用管理員 bypass。僅 `synchronized: true` 且兩端與本機 tree SHA 相同代表完成；commit SHA 可不同。分歧須保留最新 Sites commit 的祖先關係，合併並測試；禁止 force-push、丟棄任一端修改或宣稱只有單邊成功即已同步。
 - 憑證只經隱藏 stdin 傳入，不能存檔、提交、寫入 shell 參數或輸出。必要時重新取得原生憑證。
 - GitHub 與 Sites 各自保留 commit 歷史；發布時先用 Sites source workflow 開啟獨立 Sites checkout，再在那裡建置／封裝，不要把 GitHub checkout 當作 Sites checkout。
-- 同步不會部署。只有需要正式發布時才用 Sites 既有 source workflow 與原生部署工具；保留公開權限、D1 `DB`、`LUNCH_ADMIN_CODE` 與原網址。
+- 同步不會部署。使用者已要求從這裡交付修改時，合併並同步後接續完成正式發布，除非明確要求不上線；保留公開權限、D1 `DB`、`LUNCH_ADMIN_CODE` 與原網址。外部 GitHub push 目前不會自行呼叫 Sites 發布，不得宣稱已接通無人值守部署。
 - 正式發布依 README 的 release check／start／finish 流程：核對目前 main CI、Sites tree、封裝來源標記與 SHA-256；先建立 GitHub production Deployment 再用原生 Sites 發布，依原生終態記錄結果。若已發布但紀錄待補，只重試 finish，不重複部署。不得把未部署的 commit、模擬結果或舊 v18 記錄為新版本成功。
-- main 規則由 `scripts/protect-main.mjs` 管理，必須經 PR、GitHub Actions 的 verify、最新 main，無 bypass、禁止刪除及 force-push；不得為讓同步成功而關閉保護。CI token 維持唯讀；GitHub 管理與 Deployments 寫入用有效 CLI 登入，不能保存憑證到專案。
+- main 規則由 `scripts/protect-main.mjs` 管理，必須經 PR、GitHub Actions 的 verify、最新 main，無 bypass、禁止刪除及 force-push；不得為讓同步成功而關閉保護。驗證 CI token 維持唯讀；使用者授權專用 `production-record.yml` 工作取得 `deployments: write`，以 GitHub 臨時 token 建立／更新發布紀錄。GitHub App 缺少 Deployments 權限時使用此工作，不要求使用者反覆調整 App 權限。不能保存憑證到專案。
 - 第 18 版 API 在 `worker/ordering.ts`；不可因前端移植而改商業規則、重建資料庫或改既有遷移。新 schema 必須追加遷移。
 - 本機／Docker 使用獨立 SQLite，不能將它當作正式資料庫，不要把本機測試資料與 `.env` 提交。

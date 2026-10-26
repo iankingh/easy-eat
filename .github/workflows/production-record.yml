@@ -1,0 +1,55 @@
+name: Record Sites production release
+run-name: Sites ${{ inputs.operation }} ${{ inputs.request_key }}
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Record a pending release or a native Sites deployment result
+        required: true
+        type: choice
+        options: [record-start, finish]
+      request_key:
+        description: Non-secret correlation key for this release attempt
+        required: true
+        type: string
+      release_input:
+        description: JSON receipts from release check and native Sites tools; no credentials
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: sites-production-record
+  cancel-in-progress: false
+jobs:
+  record:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Record verified release receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_OPERATION: ${{ inputs.operation }}
+          RELEASE_INPUT: ${{ inputs.release_input }}
+        run: |
+          case "$RELEASE_OPERATION" in
+            record-start|finish) ;;
+            *) exit 1 ;;
+          esac
+          printf '%s' "$RELEASE_INPUT" | node scripts/release.mjs "$RELEASE_OPERATION" > "$RUNNER_TEMP/production-record.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-record-${{ github.run_id }}
+          path: ${{ runner.temp }}/production-record.json
+          retention-days: 90
+          if-no-files-found: error

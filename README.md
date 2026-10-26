@@ -68,7 +68,7 @@ cp .env.example .env
 
 `easy-eat-main` repository ruleset 套用於 `refs/heads/main`：必須經 PR、由 GitHub Actions 提供的 `verify` 成功、分支包含最新 main、討論已解決；批准人數為 0、無指定審核者、無未歸屬變更的額外批准要求，僅允許 merge commit，禁止刪除與 force-push，無管理員或其他 bypass。工具明確設定這些欄位，避免沿用 GitHub 的額外批准預設值。
 
-首次上線先以 PR 合併這套同步工具，等待合併後 main 的 CI 成功，再由 repository 管理員執行 `npm run protect:check` 查看設定、`npm run protect:apply` 套用並回讀驗證。重複套用會更新同名 repository ruleset。規則是 GitHub 伺服器設定，單純提交 YAML 並不代表保護已啟用；CI 的 token 維持唯讀，不持有管理權限。
+首次上線先以 PR 合併這套同步工具，等待合併後 main 的 CI 成功，再由 repository 管理員執行 `npm run protect:check` 查看設定、`npm run protect:apply` 套用並回讀驗證。重複套用會更新同名 repository ruleset。規則是 GitHub 伺服器設定，單純提交 YAML 並不代表保護已啟用；驗證 CI 的 token 維持唯讀，不持有管理權限。專用發布紀錄工作僅額外取得 `deployments: write`。
 
 ## 正式發布
 
@@ -87,6 +87,17 @@ cp .env.example .env
 5. 若站已發布而 GitHub 寫入失敗，工具回報 `recordPending: true`。保留原生部署 ID 與上述輸入，只重試 `finish`，不可重複發布。遠端寫入結果不確定時，重試會先讀取既有紀錄。
 
 例如 `node scripts/release.mjs check < .release/source-input.json > .release/check.json`；`start`、`finish` 也由 stdin 接收對應 JSON。原生 Sites 工具仍是唯一的發布操作，這些腳本本身不呼叫發布 API，也不會自動部署。每次發布可在 [GitHub Deployments](https://github.com/iankingh/easy-eat/deployments) 查看對應 commit 與結果；舊 v18 不冒認為後來的 Vue commit。
+
+### GitHub App 沒有 Deployments 寫入權限時
+
+使用 `.github/workflows/production-record.yml`，由 Actions 的臨時 token 寫入部署紀錄，不將 Sites 短效憑證放進 GitHub Secrets，也不擴大驗證 CI 的權限。此工作只處理紀錄；網站仍由 Sites 原生工具發布。
+
+1. 在來源 checkout 完成上述 `check`，並保存同一封裝的 Sites 版本。保留 `check` 及 `savedVersion` 的非機密 JSON 收據。
+2. 透過 workflow dispatch 呼叫 `production-record.yml`，`ref` 為 `main`，`operation` 為 `record-start`，`request_key` 為這次發布的辨識字串，`release_input` 為 `{ "check": <檢查結果>, "savedVersion": <保存結果> }` 的 JSON 字串。不得放入憑證。它會重新核對目前 main、CI、tree、版本及封裝收據，建立或重用 pending Deployment。
+3. 等工作成功後，下載該 run 的 `production-record-<run ID>` artifact，保存其中的 `production-record.json` 為 release。沒有成功結果時不得先發布；若 `alreadySucceeded: true`，不得重複部署。
+4. 使用 Sites 原生工具發布並取得終態，再以 `operation: finish`、`release_input: { "release": <release>, "result": <原生結果> }` dispatch 同一工作，保存輸出 artifact。只有原生成功才回寫 success。已上線但回寫失敗時，只重跑 finish。
+
+`record-start` 僅能在此 repository 的 main workflow dispatch 環境執行；本機 `start` 仍會核對實體封裝雜湊。Actions 工作不會把本機路徑當成已驗證的遠端檔案，也不代表 Sites 已上線。從本工作環境交付時，CI 通過、兩端同步後，應主動完成原生發布與 finish；目前外部 GitHub push 本身仍不會自動觸發 Sites 發布。
 
 詳見 [遷移記錄](docs/migration-plan.md) 與 [API 契約](API.md)。
 
